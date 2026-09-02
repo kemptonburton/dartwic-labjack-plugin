@@ -4,26 +4,32 @@
 #include <modules/BaseModule.h>
 #include <nlohmann/json.hpp>
 #include <string>
-#include <vector>
+#include <utility>
+
+#ifdef _WIN32
+#define DARTWIC_PLUGIN_EXPORT extern "C" __declspec(dllexport)
+#else
+#define DARTWIC_PLUGIN_EXPORT extern "C" __attribute__((visibility("default")))
+#endif
 
 namespace DARTWIC::Plugins {
-    struct PluginModuleType {
-        std::string id;
-        std::string config_path = "module_config.json";
-        std::string default_parameters_path = "default_parameters.json";
-    };
-
+    /**
+     * Root object implemented by an engine plugin.
+     *
+     * Registration and runtime operations are both exposed by API::SDK_API.
+     *
+     * @dartwic-reference
+     * @category Lifecycle
+     */
     class BasePlugin {
     public:
         virtual ~BasePlugin() = default;
         BasePlugin(nlohmann::json cfg, API::SDK_API* drtw) : config(std::move(cfg)), dartwic(drtw) {}
 
+        /** Registers the plugin's module types, task types, loops, functions, and extension operations. */
         virtual void onPluginLoaded() {}
 
-        virtual std::vector<PluginModuleType> getModuleTypes() const {
-            return {};
-        }
-
+        /** Creates a configured module instance for one of the plugin's registered module types. */
         virtual Modules::BaseModule* createModule(
             const std::string& module_type_id,
             nlohmann::json cfg,
@@ -35,10 +41,12 @@ namespace DARTWIC::Plugins {
             return nullptr;
         }
 
+        /** Stores the canonical plugin identifier assigned by the host. */
         void setPluginId(const std::string& plugin_id_value) {
             plugin_id = plugin_id_value;
         }
 
+        /** Returns the canonical plugin identifier assigned by the host. */
         const std::string& getPluginId() const {
             return plugin_id;
         }
@@ -51,4 +59,4 @@ namespace DARTWIC::Plugins {
     };
 }
 
-#endif //BASEPLUGIN_H
+#endif // BASEPLUGIN_H

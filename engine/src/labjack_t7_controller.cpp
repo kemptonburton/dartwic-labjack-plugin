@@ -24,7 +24,7 @@ namespace {
     constexpr int LJM_DEVICE_STREAM_NOT_RUNNING = 2620;
 
     std::string taskKey(DARTWIC::API::TaskRuntime& task_runtime) {
-        return task_runtime.getPortalName() + "/" + task_runtime.getTaskName();
+        return task_runtime.getTaskName();
     }
 
     std::string taskController(DARTWIC::API::TaskRuntime& task_runtime) {
@@ -91,17 +91,29 @@ LabJackT7Controller::LabJackT7Controller(
     instance_name_(std::move(instance_name)),
     device_type_(std::move(device_type)),
     connection_type_(std::move(connection_type)),
-    identifier_(std::move(identifier)),
-    connection_loop_name_("labjack_t7_connection_" + instance_name_) {
+    identifier_(std::move(identifier)) {
+    module_->dartwic->upsertChannelField(instance_name_ + ".info.connected", ChannelField::VALUE, 0.0,
+        DARTWIC::API::ChannelStorage::Fixed);
+    module_->dartwic->upsertChannelField(instance_name_ + ".info.connected", ChannelField::UNITS, std::string{"bool"},
+        DARTWIC::API::ChannelStorage::Fixed);
     ljm_library_ready_ = validateLjmLibrary();
-    module_->dartwic->onStart(connection_loop_name_, [this]() { connectionLoopStart(); });
-    module_->dartwic->onLoop(connection_loop_name_, [this]() { connectionLoop(); });
-    module_->dartwic->onEnd(connection_loop_name_, [this]() { connectionLoopEnd(); });
+    connection_thread_ = std::jthread([this](const std::stop_token stop_token) {
+        connectionLoopStart();
+        while (!stop_token.stop_requested()) {
+            connectionLoop();
+            for (int interval = 0; interval < 10 && !stop_token.stop_requested(); ++interval) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+        }
+        connectionLoopEnd();
+    });
 }
 
 LabJackT7Controller::~LabJackT7Controller() {
+    connection_thread_.request_stop();
+    if (connection_thread_.joinable()) connection_thread_.join();
     stopStream();
-    module_->dartwic->removeLoop(connection_loop_name_);
+    disconnect();
 }
 
 bool LabJackT7Controller::isConnected() const {
@@ -109,25 +121,25 @@ bool LabJackT7Controller::isConnected() const {
 }
 
 double LabJackT7Controller::query(const std::string& channel, double default_value) const {
-    return module_->dartwic->queryChannelField(instance_name_, channel, ChannelField::VALUE, ChannelValue{default_value});
+    return module_->dartwic->queryChannelField(instance_name_ + "." + channel, ChannelField::VALUE, ChannelValue{default_value});
 }
 
 double LabJackT7Controller::query(const RapidChannel& channel, double default_value) const {
-    return module_->dartwic->queryChannelField(channel.portal, channel.channel, ChannelField::VALUE, ChannelValue{default_value});
+    return module_->dartwic->queryChannelField(channel.channel, ChannelField::VALUE, ChannelValue{default_value});
 }
 
 void LabJackT7Controller::upsert(const std::string& channel, ChannelValue value) const {
-    module_->dartwic->upsertChannelField(instance_name_, channel, ChannelField::VALUE, std::move(value));
+    module_->dartwic->upsertChannelField(instance_name_ + "." + channel, ChannelField::VALUE, std::move(value),
+        DARTWIC::API::ChannelStorage::Fixed);
 }
 
 void LabJackT7Controller::upsert(const RapidChannel& channel, ChannelValue value) const {
-    module_->dartwic->upsertChannelField(channel.portal, channel.channel, ChannelField::VALUE, std::move(value));
-    module_->dartwic->upsertChannelField(channel.portal, channel.channel, ChannelField::STALE_TIMEOUT, 1.0);
-    module_->dartwic->upsertChannelField(channel.portal, channel.channel, ChannelField::CONTROL_POLICY, ControlPolicy::ObserveOnly);
+    module_->dartwic->upsertChannelField(channel.channel, ChannelField::VALUE, std::move(value),
+        DARTWIC::API::ChannelStorage::Fixed);
 }
 
 void LabJackT7Controller::upsertBulk(const RapidChannel& channel, const std::vector<std::pair<double, uint64_t>>& data) const {
-    module_->dartwic->upsertChannelValueBulk(channel.portal, channel.channel, data);
+    module_->dartwic->upsertChannelValueBulk(channel.channel, data);
 }
 
 void LabJackT7Controller::consoleError(
@@ -141,14 +153,13 @@ void LabJackT7Controller::consoleError(
 }
 
 void LabJackT7Controller::connectionLoopStart() {
-    upsert("device_connected", 0.0);
+    upsert("info.connected", 0.0);
 }
 
 void LabJackT7Controller::connectionLoop() {
     if (!ljm_library_ready_) {
         connected_ = false;
-        upsert("device_connected", 0.0);
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        upsert("info.connected", 0.0);
         return;
     }
 
@@ -157,7 +168,6 @@ void LabJackT7Controller::connectionLoop() {
         if (error != LJME_NOERROR) {
             handleError(error, "connect");
         }
-        std::this_thread::sleep_for(std::chrono::seconds(1));
         return;
     }
 
@@ -178,7 +188,7 @@ bool LabJackT7Controller::validateLjmLibrary() const {
         consoleError(
             "LabJack T7 LJM Install Required [" + instance_name_ + "]",
             "The LabJack LJM system install could not be read. Install the LabJack LJM Basic driver package.",
-            {instance_name_ + "/device_connected.value"},
+            {instance_name_ + ".info.connected"},
             "Install LabJack LJM version " + std::to_string(LJM_VERSION) + " and restart DARTWIC.",
             0
         );
@@ -193,7 +203,7 @@ bool LabJackT7Controller::validateLjmLibrary() const {
         consoleError(
             "LabJack T7 LJM Version Mismatch [" + instance_name_ + "]",
             description.str(),
-            {instance_name_ + "/device_connected.value"},
+            {instance_name_ + ".info.connected"},
             "Install LabJack LJM version " + std::to_string(LJM_VERSION) + " so the system runtime matches the plugin SDK.",
             0
         );
@@ -208,7 +218,7 @@ bool LabJackT7Controller::validateLjmLibrary() const {
         consoleError(
             "LabJack T7 LJM Constants Error [" + instance_name_ + "]",
             "The installed LabJack LJM runtime could not resolve AIN0. The system LJM constants/configuration files may be missing or corrupt.",
-            {instance_name_ + "/device_connected.value"},
+            {instance_name_ + ".info.connected"},
             "Repair or reinstall LabJack LJM version " + std::to_string(LJM_VERSION) + ", then restart DARTWIC.",
             0
         );
@@ -222,7 +232,7 @@ int LabJackT7Controller::connect() {
     std::lock_guard<std::mutex> lock(handle_mutex_);
     if (handle_ != -1) {
         connected_ = true;
-        upsert("device_connected", 1.0);
+        upsert("info.connected", 1.0);
         return LJME_NOERROR;
     }
 
@@ -239,12 +249,12 @@ int LabJackT7Controller::connect() {
     if (error != LJME_NOERROR) {
         handle_ = -1;
         connected_ = false;
-        upsert("device_connected", 0.0);
+        upsert("info.connected", 0.0);
         return error;
     }
 
     connected_ = true;
-    upsert("device_connected", 1.0);
+    upsert("info.connected", 1.0);
     return LJME_NOERROR;
 }
 
@@ -255,13 +265,13 @@ void LabJackT7Controller::disconnect() {
         handle_ = -1;
     }
     connected_ = false;
-    upsert("device_connected", 0.0);
+    upsert("info.connected", 0.0);
 }
 
 void LabJackT7Controller::verifyConnection() {
     if (demo_mode_) {
         connected_ = true;
-        upsert("device_connected", 1.0);
+        upsert("info.connected", 1.0);
         return;
     }
 
@@ -271,19 +281,19 @@ void LabJackT7Controller::verifyConnection() {
         std::lock_guard<std::mutex> lock(handle_mutex_);
         if (handle_ == -1) {
             connected_ = false;
-            upsert("device_connected", 0.0);
+            upsert("info.connected", 0.0);
             return;
         }
         error = LJM_eReadName(handle_, "SERIAL_NUMBER", &value);
     }
     if (error == LJME_NOERROR) {
         connected_ = true;
-        upsert("device_connected", 1.0);
+        upsert("info.connected", 1.0);
         return;
     }
 
     connected_ = false;
-    upsert("device_connected", 0.0);
+    upsert("info.connected", 0.0);
     {
         std::lock_guard<std::mutex> lock(handle_mutex_);
         if (handle_ != -1) {
@@ -300,7 +310,7 @@ void LabJackT7Controller::handleError(int error_number, const std::string& opera
     consoleError(
         "LabJack T7 Error [" + instance_name_ + "]",
         "LabJack operation failed.\n[Operation: " + operation + "]\n[LJM Error: " + std::string(error_string) + "]",
-        {instance_name_ + "/device_connected.value"},
+        {instance_name_ + ".info.connected"},
         "Check the LabJack connection, stream configuration, and device state.",
         (operation == "connect" || operation == "verify_connection") ? 5 : 0
     );
@@ -314,20 +324,25 @@ std::optional<LabJackT7Controller::RapidChannel> LabJackT7Controller::parseRapid
 }
 
 std::optional<LabJackT7Controller::RapidChannel> LabJackT7Controller::splitRapidChannelPath(const std::string& channel_path) const {
-    const auto separator = channel_path.find('/');
-    if (separator == std::string::npos || separator == 0 || separator + 1 >= channel_path.size()) {
-        return std::nullopt;
+    std::string normalized = channel_path;
+    if (normalized.size() >= 2 && normalized.front() == '|' && normalized.back() == '|') {
+        normalized = normalized.substr(1, normalized.size() - 2);
     }
-    return RapidChannel{
-        .portal = channel_path.substr(0, separator),
-        .channel = channel_path.substr(separator + 1)
-    };
+    std::replace(normalized.begin(), normalized.end(), '/', '.');
+    normalized.erase(normalized.begin(), std::find_if(normalized.begin(), normalized.end(), [](unsigned char character) {
+        return std::isspace(character) == 0;
+    }));
+    normalized.erase(std::find_if(normalized.rbegin(), normalized.rend(), [](unsigned char character) {
+        return std::isspace(character) == 0;
+    }).base(), normalized.end());
+    if (normalized.empty()) return std::nullopt;
+    return RapidChannel{.channel = std::move(normalized)};
 }
 
 std::string LabJackT7Controller::buildStreamLabJackName(const nlohmann::json& mapping) const {
     const std::string channel_type = mapping.contains("channel_type") && mapping["channel_type"].is_string()
         ? mapping["channel_type"].get<std::string>()
-        : "analog";
+        : mapping.value("register_type", std::string{"analog"});
     const int register_number = mapping.contains("register") && isIntegerJson(mapping["register"])
         ? mapping["register"].get<int>()
         : 0;
@@ -379,7 +394,7 @@ std::vector<LabJackT7Controller::StreamMapping> LabJackT7Controller::parseStream
 
         const std::string channel_type = mapping.contains("channel_type") && mapping["channel_type"].is_string()
             ? mapping["channel_type"].get<std::string>()
-            : "analog";
+            : mapping.value("register_type", std::string{"analog"});
         const bool is_analog = channel_type != "digital";
         const std::string labjack_name = buildStreamLabJackName(mapping);
         int address = 0;
@@ -472,7 +487,7 @@ void LabJackT7Controller::handleStreamConfigError(
     consoleError(
         "LabJack T7 Stream Config Error [" + instance_name_ + "]",
         description.str(),
-        {task_runtime.getPortalName() + "/" + task_runtime.getTaskName()},
+        {task_runtime.getTaskName()},
         "Fix the LabJack stream task mapping configuration, then start the stream again.",
         0
     );
@@ -512,7 +527,8 @@ std::vector<LabJackT7Controller::DigitalWriteMapping> LabJackT7Controller::parse
     }
 
     for (const auto& mapping : arguments["mappings"]) {
-        if (!mapping.is_object() || !mapping.contains("channel") || !mapping.contains("register") || !isIntegerJson(mapping["register"])) {
+        if (!mapping.is_object() || !mapping.contains("channel") ||
+            !mapping.contains("register") || !isIntegerJson(mapping["register"])) {
             continue;
         }
 
@@ -530,7 +546,6 @@ std::vector<LabJackT7Controller::DigitalWriteMapping> LabJackT7Controller::parse
             .labjack_name = buildDigitalLabJackName(mapping),
             .source = *source,
             .state = RapidChannel{
-                .portal = source->portal,
                 .channel = stateChannelName(source->channel)
             },
             .register_number = register_number
@@ -546,18 +561,21 @@ void LabJackT7Controller::publishTaskDiagnostic(
     ChannelValue value
 ) const {
     const auto channel = task_runtime.getTaskName() + suffix;
-    module_->dartwic->upsertChannelField(task_runtime.getPortalName(), channel, ChannelField::VALUE, std::move(value));
-    configureObserveOnlyChannel(task_runtime.getPortalName(), channel, taskController(task_runtime));
+    module_->dartwic->upsertChannelField(channel, ChannelField::VALUE, std::move(value),
+        DARTWIC::API::ChannelStorage::Fixed);
+    configureObserveOnlyChannel(channel, taskController(task_runtime));
 }
 
 void LabJackT7Controller::configureObserveOnlyChannel(
-    const std::string& portal,
     const std::string& channel,
     const std::string& controller
 ) const {
-    module_->dartwic->upsertChannelField(portal, channel, ChannelField::CONTROL_OWNER, controller);
-    module_->dartwic->upsertChannelField(portal, channel, ChannelField::ACTIVE_CONTROLLER, controller);
-    module_->dartwic->upsertChannelField(portal, channel, ChannelField::CONTROL_POLICY, ControlPolicy::ObserveOnly);
+    module_->dartwic->upsertChannelField(channel, ChannelField::CONTROL_OWNER, controller,
+        DARTWIC::API::ChannelStorage::Fixed);
+    module_->dartwic->upsertChannelField(channel, ChannelField::ACTIVE_CONTROLLER, controller,
+        DARTWIC::API::ChannelStorage::Fixed);
+    module_->dartwic->upsertChannelField(channel, ChannelField::CONTROL_POLICY, ControlPolicy::ObserveOnly,
+        DARTWIC::API::ChannelStorage::Fixed);
 }
 
 void LabJackT7Controller::configureStreamChannelFields(
@@ -566,9 +584,11 @@ void LabJackT7Controller::configureStreamChannelFields(
     const std::string& controller
 ) const {
     for (const auto& mapping : mappings) {
-        module_->dartwic->upsertChannelField(mapping.destination.portal, mapping.destination.channel, ChannelField::STALE_TIMEOUT, stale_timeout_seconds);
-        module_->dartwic->upsertChannelField(mapping.destination.portal, mapping.destination.channel, ChannelField::RECORD_MODE, RecordMode::EveryValue);
-        configureObserveOnlyChannel(mapping.destination.portal, mapping.destination.channel, controller);
+        module_->dartwic->upsertChannelField(mapping.destination.channel, ChannelField::STALE_TIMEOUT, stale_timeout_seconds,
+            DARTWIC::API::ChannelStorage::Fixed);
+        module_->dartwic->upsertChannelField(mapping.destination.channel, ChannelField::RECORD_MODE, RecordMode::EveryValue,
+            DARTWIC::API::ChannelStorage::Fixed);
+        configureObserveOnlyChannel(mapping.destination.channel, controller);
     }
 }
 
@@ -579,7 +599,7 @@ void LabJackT7Controller::markDisconnectedFromStreamError() {
         handle_ = -1;
     }
     connected_ = false;
-    upsert("device_connected", 0.0);
+    upsert("info.connected", 0.0);
 }
 
 bool LabJackT7Controller::tryAcquireStream(const std::string& task_key) {
@@ -609,7 +629,10 @@ uint64_t LabJackT7Controller::unixNanosecondsNow() const {
     );
 }
 
-void LabJackT7Controller::applyDigitalWrite(const nlohmann::json& arguments) {
+void LabJackT7Controller::applyDigitalWrite(
+    const nlohmann::json& arguments,
+    DARTWIC::API::TaskRuntime& task_runtime
+) {
     if (!ljm_library_ready_) {
         return;
     }
@@ -619,6 +642,9 @@ void LabJackT7Controller::applyDigitalWrite(const nlohmann::json& arguments) {
     }
 
     const auto mappings = parseDigitalWriteMappings(arguments);
+    if (mappings.empty()) {
+        return;
+    }
     if (demo_mode_) {
         for (const auto& mapping : mappings) {
             const double desired = query(mapping.source, 0.0) != 0.0 ? 1.0 : 0.0;
@@ -627,26 +653,79 @@ void LabJackT7Controller::applyDigitalWrite(const nlohmann::json& arguments) {
         return;
     }
 
-    std::lock_guard<std::mutex> lock(handle_mutex_);
-
+    std::vector<double> desired_values;
+    std::vector<double> readback_values(mappings.size(), 0.0);
+    desired_values.reserve(mappings.size());
     for (const auto& mapping : mappings) {
-        const double desired = query(mapping.source, 0.0) != 0.0 ? 1.0 : 0.0;
-        int error = LJM_eWriteName(handle_, mapping.labjack_name.c_str(), desired);
-        if (error != LJME_NOERROR) {
-            handleError(error, "digital_write:" + mapping.labjack_name);
-            continue;
+        desired_values.push_back(query(mapping.source, 0.0) != 0.0 ? 1.0 : 0.0);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(handle_mutex_);
+        if (handle_ == -1) {
+            return;
         }
 
-        double dio_state = 0.0;
-        error = LJM_eReadName(handle_, "DIO_STATE", &dio_state);
+        // Reading an individual DIO# register changes that line to an input on
+        // T-series devices. The bank registers report state and direction
+        // without disturbing outputs, so use them for readback and only write
+        // lines whose state or direction actually needs correction.
+        const char* bank_names[] = {"DIO_STATE", "DIO_DIRECTION"};
+        double bank_values[] = {0.0, 0.0};
+        int error_address = -1;
+        int error = LJM_eReadNames(handle_, 2, bank_names, bank_values, &error_address);
         if (error != LJME_NOERROR) {
-            handleError(error, "digital_readback:DIO_STATE");
-            continue;
+            handleError(error, "digital_bank_read:address=" + std::to_string(error_address));
+            return;
         }
 
-        const auto dio_state_bits = static_cast<std::uint32_t>(dio_state);
-        const double readback = (dio_state_bits & (std::uint32_t{1} << mapping.register_number)) != 0 ? 1.0 : 0.0;
-        upsert(mapping.state, readback);
+        auto state_mask = static_cast<std::uint32_t>(std::llround(bank_values[0]));
+        const auto direction_mask = static_cast<std::uint32_t>(std::llround(bank_values[1]));
+        std::vector<std::string> changed_names;
+        std::vector<double> changed_values;
+        changed_names.reserve(mappings.size());
+        changed_values.reserve(mappings.size());
+        for (size_t index = 0; index < mappings.size(); ++index) {
+            const auto bit = std::uint32_t{1} << mappings[index].register_number;
+            const bool is_output = (direction_mask & bit) != 0;
+            const double current_value = (state_mask & bit) != 0 ? 1.0 : 0.0;
+            if (!is_output || current_value != desired_values[index]) {
+                changed_names.push_back(mappings[index].labjack_name);
+                changed_values.push_back(desired_values[index]);
+            }
+        }
+
+        if (!changed_names.empty()) {
+            std::vector<const char*> changed_name_pointers;
+            changed_name_pointers.reserve(changed_names.size());
+            for (const auto& name : changed_names) changed_name_pointers.push_back(name.c_str());
+
+            error_address = -1;
+            error = LJM_eWriteNames(
+                handle_, static_cast<int>(changed_names.size()), changed_name_pointers.data(),
+                changed_values.data(), &error_address);
+            if (error != LJME_NOERROR) {
+                handleError(error, "digital_write_changed:address=" + std::to_string(error_address));
+                return;
+            }
+
+            double updated_state = 0.0;
+            error = LJM_eReadName(handle_, "DIO_STATE", &updated_state);
+            if (error != LJME_NOERROR) {
+                handleError(error, "digital_bank_readback");
+                return;
+            }
+            state_mask = static_cast<std::uint32_t>(std::llround(updated_state));
+        }
+
+        for (size_t index = 0; index < mappings.size(); ++index) {
+            const auto bit = std::uint32_t{1} << mappings[index].register_number;
+            readback_values[index] = (state_mask & bit) != 0 ? 1.0 : 0.0;
+        }
+    }
+
+    for (size_t index = 0; index < mappings.size(); ++index) {
+        upsert(mappings[index].state, readback_values[index]);
     }
 }
 
@@ -710,11 +789,9 @@ void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtim
     int device_backlog = 0;
     int ljm_backlog = 0;
     int read_number = 0;
-    int reads_since_rate_publish = 0;
 
     publishTaskDiagnostic(task_runtime, "_stream_target_scan_rate", scan_rate);
     publishTaskDiagnostic(task_runtime, "_stream_scans_per_read", static_cast<double>(scans_per_read));
-    publishTaskDiagnostic(task_runtime, "_stream_worker_read_rate", 0.0);
     publishTaskDiagnostic(task_runtime, "_stream_last_read_ms", 0.0);
     publishTaskDiagnostic(task_runtime, "_stream_device_scan_backlog", 0.0);
     publishTaskDiagnostic(task_runtime, "_stream_ljm_scan_backlog", 0.0);
@@ -722,8 +799,7 @@ void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtim
     std::mt19937 rng(std::random_device{}());
     std::uniform_real_distribution<double> demo_distribution(0.0, 10.0);
     auto stream_start = unixNanosecondsNow();
-    auto rate_window_start = std::chrono::steady_clock::now();
-    auto last_successful_read = rate_window_start;
+    auto last_successful_read = std::chrono::steady_clock::now();
     bool stream_started = false;
 
     while (!task_runtime.isStopRequested()) {
@@ -731,12 +807,9 @@ void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtim
             if (demo_mode_) {
                 publishTaskDiagnostic(task_runtime, "_stream_actual_scan_rate", scan_rate);
                 publishTaskDiagnostic(task_runtime, "_stream_expected_read_rate", scan_rate / static_cast<double>(scans_per_read));
-                publishTaskDiagnostic(task_runtime, "_stream_worker_read_rate", 0.0);
                 read_number = 0;
-                reads_since_rate_publish = 0;
                 stream_start = unixNanosecondsNow();
-                rate_window_start = std::chrono::steady_clock::now();
-                last_successful_read = rate_window_start;
+                last_successful_read = std::chrono::steady_clock::now();
                 stream_started = true;
             } else if (!isConnected()) {
                 const int error = connect();
@@ -816,12 +889,9 @@ void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtim
                 scan_rate = requested_scan_rate;
                 publishTaskDiagnostic(task_runtime, "_stream_actual_scan_rate", scan_rate);
                 publishTaskDiagnostic(task_runtime, "_stream_expected_read_rate", scan_rate / static_cast<double>(scans_per_read));
-                publishTaskDiagnostic(task_runtime, "_stream_worker_read_rate", 0.0);
                 read_number = 0;
-                reads_since_rate_publish = 0;
                 stream_start = unixNanosecondsNow();
-                rate_window_start = std::chrono::steady_clock::now();
-                last_successful_read = rate_window_start;
+                last_successful_read = std::chrono::steady_clock::now();
                 stream_started = true;
             }
         }
@@ -853,7 +923,6 @@ void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtim
         publishTaskDiagnostic(task_runtime, "_stream_last_read_ms", std::chrono::duration<double, std::milli>(read_end - last_successful_read).count());
         last_successful_read = read_end;
         ++read_number;
-        ++reads_since_rate_publish;
         std::unordered_map<std::string, std::vector<std::pair<double, uint64_t>>> grouped;
         std::unordered_map<std::string, RapidChannel> grouped_channels;
         for (int scan_index = 0; scan_index < scans_per_read; ++scan_index) {
@@ -862,7 +931,7 @@ void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtim
             for (size_t mapping_index = 0; mapping_index < mappings.size(); ++mapping_index) {
                 const auto data_index = static_cast<size_t>(scan_index) * mappings.size() + mapping_index;
                 const auto& destination = mappings[mapping_index].destination;
-                const std::string key = destination.portal + '\x1f' + destination.channel;
+                const std::string key = destination.channel;
                 grouped[key].push_back({data[data_index], timestamp});
                 grouped_channels[key] = destination;
             }
@@ -875,17 +944,7 @@ void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtim
         publishTaskDiagnostic(task_runtime, "_stream_device_scan_backlog", static_cast<double>(device_backlog));
         publishTaskDiagnostic(task_runtime, "_stream_ljm_scan_backlog", static_cast<double>(ljm_backlog));
 
-        const auto rate_window_end = std::chrono::steady_clock::now();
-        const double rate_window_seconds = std::chrono::duration<double>(rate_window_end - rate_window_start).count();
-        if (rate_window_seconds >= 1.0) {
-            publishTaskDiagnostic(
-                task_runtime,
-                "_stream_worker_read_rate",
-                static_cast<double>(reads_since_rate_publish) / rate_window_seconds
-            );
-            reads_since_rate_publish = 0;
-            rate_window_start = rate_window_end;
-        }
+        task_runtime.recordWorkerCycle();
     }
 
     if (stream_started && !demo_mode_) {

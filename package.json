@@ -1,13 +1,30 @@
 {
-  "name": "labjack-t7-plugin-interface",
+  "name": "labjack-t7-plugin",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "build": "node build.mjs",
-    "install:dev": "node build.mjs --install-dev"
+    "build": "vite build",
+    "dev": "vite build --watch",
+    "typecheck": "tsc --noEmit",
+    "preversion": "node ./scripts/plugin-version.mjs --validate",
+    "version": "node ./scripts/plugin-version.mjs",
+    "package": "node ./scripts/plugin-package.mjs",
+    "deploy": "node ./scripts/plugin-deploy.mjs",
+    "deploy:engine-debug": "node ./scripts/plugin-deploy.mjs --engine-debug",
+    "deploy:debug": "node ./scripts/plugin-deploy.mjs --debug",
+    "deploy:interface": "node ./scripts/plugin-deploy.mjs --interface"
+  },
+  "dependencies": {
+    "@dartwic/interface-sdk": "file:../DARTWIC/sdk/interface_plugin_sdk"
   },
   "devDependencies": {
-    "esbuild": "^0.25.2"
+    "@types/node": "^24.9.1",
+    "@vitejs/plugin-react": "^4.4.1",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.19"
   }
 }

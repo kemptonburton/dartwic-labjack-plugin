@@ -5,6 +5,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -25,14 +26,13 @@ public:
     ~LabJackT7Controller();
 
     bool isConnected() const;
-    void applyDigitalWrite(const nlohmann::json& arguments);
+    void applyDigitalWrite(const nlohmann::json& arguments, DARTWIC::API::TaskRuntime& task_runtime);
     void runStreamWorker(DARTWIC::API::TaskRuntime& task_runtime);
     void stopStream();
     void stopStream(DARTWIC::API::TaskRuntime& task_runtime);
 
 private:
     struct RapidChannel {
-        std::string portal;
         std::string channel;
     };
 
@@ -80,7 +80,7 @@ private:
     void handleStreamConfigError(const std::vector<std::string>& errors, DARTWIC::API::TaskRuntime& task_runtime) const;
     int applyAnalogStreamConfigLocked(const std::vector<StreamMapping>& mappings, std::string& operation);
     void publishTaskDiagnostic(DARTWIC::API::TaskRuntime& task_runtime, const std::string& suffix, DARTWIC::API::ChannelValue value) const;
-    void configureObserveOnlyChannel(const std::string& portal, const std::string& channel, const std::string& controller) const;
+    void configureObserveOnlyChannel(const std::string& channel, const std::string& controller) const;
     void configureStreamChannelFields(const std::vector<StreamMapping>& mappings, double stale_timeout_seconds, const std::string& controller) const;
     void markDisconnectedFromStreamError();
     bool tryAcquireStream(const std::string& task_key);
@@ -93,7 +93,6 @@ private:
     std::string device_type_;
     std::string connection_type_;
     std::string identifier_;
-    std::string connection_loop_name_;
     bool ljm_library_ready_ = true;
     std::atomic_bool demo_mode_{false};
     std::atomic_bool connected_{false};
@@ -101,6 +100,7 @@ private:
     std::mutex stream_mutex_;
     std::string active_stream_task_key_;
     int handle_ = -1;
+    std::jthread connection_thread_;
 };
 
 #endif

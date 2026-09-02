@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react",
+    "jsxFactory": "React.createElement",
+    "jsxFragmentFactory": "React.Fragment",
+    "allowImportingTsExtensions": true,
+    "strict": false,
+    "allowJs": false,
+    "skipLibCheck": true
+  },
+  "include": [
+    "interface/src/**/*"
+  ]
+}

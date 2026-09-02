@@ -12,12 +12,6 @@ public:
 
     void onPluginLoaded() override;
 
-    std::vector<DARTWIC::Plugins::PluginModuleType> getModuleTypes() const override {
-        return {
-            {"labjack_t7"}
-        };
-    }
-
     DARTWIC::Modules::BaseModule* createModule(
         const std::string& module_type_id,
         nlohmann::json cfg,
