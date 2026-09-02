@@ -36,6 +36,7 @@ async function loadPluginManifest() {
 }
 
 async function preparePluginOutput(pluginId, hasEngine, hasInterface) {
+  await removePath(pluginOutputRoot);
   const sidePaths = getPluginSidePaths(pluginId);
 
   if (hasEngine) {

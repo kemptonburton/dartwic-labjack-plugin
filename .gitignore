@@ -2,6 +2,7 @@
 cmake-*
 build
 plugin
+plugin.zip
 node_modules
 
 build-configuration.json
