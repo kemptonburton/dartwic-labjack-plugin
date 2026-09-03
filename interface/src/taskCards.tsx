@@ -8,6 +8,22 @@ function readBacklog(channels: any, channelName: string) {
   return Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : null;
 }
 
+function readRate(channels: any, channelName: string) {
+  const value = Number(channels?.[channelName]?.channel_data?.value);
+  return Number.isFinite(value) ? Math.max(0, value) : null;
+}
+
+function RateMetric({label, value, channelName}: {label: string; value: number | null; channelName: string}) {
+  return (
+    <div className="rounded-md border bg-muted/40 px-3 py-2" title={channelName}>
+      <div className="text-muted-foreground">{label}</div>
+      <div className="font-mono text-sm tabular-nums">
+        {value === null ? "—" : `${value.toFixed(1)} HZ`}
+      </div>
+    </div>
+  );
+}
+
 function BacklogMetric({label, value, channelName}: {label: string; value: number | null; channelName: string}) {
   return (
     <div className="rounded-md border bg-muted/40 px-3 py-2" title={channelName}>
@@ -23,26 +39,34 @@ function LabJackTaskCard({task}: {task: any}) {
   const isStream = task.task_type === "labjack_t7.stream";
   const mappings = Array.isArray(task.arguments?.mappings) ? task.arguments.mappings : [];
   const {addChannelToTelemetry, removeChannelFromTelemetry} = useDartwic() as any;
-  const backlogChannels = React.useMemo(() => {
+  const telemetryChannels = React.useMemo(() => {
     const taskName = String(task?.name || "").trim();
     if (!isStream || !taskName) return [];
     return [
+      `${taskName}_stream_actual_scan_rate`,
+      String(task?.worker_rate_channel || `${taskName}_worker_rate`),
       `${taskName}_stream_device_scan_backlog`,
       `${taskName}_stream_ljm_scan_backlog`,
     ];
-  }, [isStream, task?.name]);
-  const channelValues = useDartwicChannelValues(backlogChannels) as any;
+  }, [isStream, task?.name, task?.worker_rate_channel]);
+  const channelValues = useDartwicChannelValues(telemetryChannels) as any;
 
   React.useEffect(() => {
-    backlogChannels.forEach((channelName) => addChannelToTelemetry(channelName));
-    return () => backlogChannels.forEach((channelName) => removeChannelFromTelemetry(channelName));
-  }, [addChannelToTelemetry, backlogChannels, removeChannelFromTelemetry]);
+    telemetryChannels.forEach((channelName) => addChannelToTelemetry(channelName));
+    return () => telemetryChannels.forEach((channelName) => removeChannelFromTelemetry(channelName));
+  }, [addChannelToTelemetry, removeChannelFromTelemetry, telemetryChannels]);
 
-  const deviceBacklogChannel = backlogChannels[0] || "";
-  const ljmBacklogChannel = backlogChannels[1] || "";
+  const streamRateChannel = telemetryChannels[0] || "";
+  const workerRateChannel = telemetryChannels[1] || "";
+  const deviceBacklogChannel = telemetryChannels[2] || "";
+  const ljmBacklogChannel = telemetryChannels[3] || "";
   return <>
     <Separator />
     <div className="grid grid-cols-2 gap-2 text-xs">
+      {isStream ? <>
+        <RateMetric label="STREAM RATE" value={readRate(channelValues, streamRateChannel)} channelName={streamRateChannel} />
+        <RateMetric label="WORKER RATE" value={readRate(channelValues, workerRateChannel)} channelName={workerRateChannel} />
+      </> : null}
       <div className="rounded-md border bg-muted/40 px-3 py-2">
         <div className="text-muted-foreground">DEVICE</div>
         <div className="truncate">{task.arguments?.module_instance_name || "UNBOUND"}</div>
