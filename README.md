@@ -9,7 +9,7 @@ Current DARTWIC 2.0 engine and interface plugin for LabJack T7 devices through t
 - Suggests a configured module, AIN/DIO fixed channels, a stream task, and a digital-write task.
 - Supports mixed analog and digital hardware streaming with per-AIN range and negative-channel configuration.
 - Supports periodic digital output commands with readback state channels.
-- Exposes live connection state, linked tasks/channels, LJM compatibility, and manual discovery from the module and plugin pages.
+- Exposes live connection state and linked tasks/channels on module pages, with LJM compatibility on the plugin page.
 - Uses the current engine and interface plugin SDK registration model.
 
 ## Runtime prerequisite

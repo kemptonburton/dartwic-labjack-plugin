@@ -1,9 +1,7 @@
 import React from "@dartwic/interface-sdk/react";
-import {useDartwic} from "@dartwic/interface-sdk/hooks";
 import {defineModuleConfig, useModuleConfigBridge} from "@dartwic/interface-sdk/module-configs";
 import {Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from "@dartwic/interface-sdk/ui/general";
 import {ModuleRuntimeOverview} from "@dartwic/interface-sdk/ui/dartwic";
-import {LjmRuntimeStatus} from "./ljmRuntime";
 import {resolveLabJackTaskChannels} from "./shared";
 
 function Field({label, htmlFor, children}: {label: string; htmlFor: string; children?: any}) {
@@ -20,7 +18,6 @@ function Row({label, children}: {label: string; children?: any}) {
 }
 
 function LabJackModuleConfig({instanceConfig, setInstanceConfig, save, moduleEditor}: any) {
-  const {operation} = useDartwic() as any;
   const [savedParameters, setSavedParameters] = React.useState(instanceConfig?.parameters || {});
   const [isSaving, setIsSaving] = React.useState(false);
   const [errorMessage, setErrorMessage] = React.useState("");
@@ -87,7 +84,6 @@ function LabJackModuleConfig({instanceConfig, setInstanceConfig, save, moduleEdi
     <ModuleRuntimeOverview instanceName={instanceConfig?.name || ""}
       resolveTaskChannels={resolveLabJackTaskChannels}
       emptyMessage="NO TASKS LINKED TO THIS MODULE" className="pt-2" />
-    <LjmRuntimeStatus operation={operation} />
   </div>;
 }
 

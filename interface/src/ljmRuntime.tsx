@@ -34,8 +34,7 @@ export function LjmRuntimeStatus({operation, compact = false}: {operation: any; 
     <div>
       <div className="mb-3 flex items-end justify-between gap-3">
         <div>
-          <div className="text-xs font-medium text-muted-foreground">LJM RUNTIME</div>
-          {!compact ? <div className="mt-1 text-sm text-muted-foreground">SYSTEM DRIVER AND PLUGIN SDK COMPATIBILITY</div> : null}
+          <div className="text-xs font-medium text-muted-foreground">DRIVER AND PLUGIN COMPATIBILITY</div>
         </div>
         <div className="flex items-center gap-2">
           <span className={ready ? "text-xs text-emerald-300" : "text-xs text-destructive"}>
@@ -44,8 +43,8 @@ export function LjmRuntimeStatus({operation, compact = false}: {operation: any; 
           <Button variant="outline" disabled={loading} onClick={refresh}>REFRESH</Button>
         </div>
       </div>
-      <div className="grid border-y border-border/70 text-sm md:grid-cols-2">
-        <div className="border-b border-border/70 px-3 py-3 md:border-b-0 md:border-r">
+      <div className="grid grid-cols-2 divide-x divide-border/70 border-y border-border/70 text-sm">
+        <div className="px-3 py-3">
           <div className="text-[11px] text-muted-foreground">PLUGIN SDK</div>
           <div>{version(info?.plugin_sdk_version)}</div>
         </div>
