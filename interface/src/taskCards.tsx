@@ -60,13 +60,13 @@ function LabJackTaskCard({task}: {task: any}) {
   const workerRateChannel = telemetryChannels[1] || "";
   const deviceBacklogChannel = telemetryChannels[2] || "";
   const ljmBacklogChannel = telemetryChannels[3] || "";
-  return <>
+  return <div className="space-y-4">
+    {isStream ? <div className="grid grid-cols-2 gap-2 text-xs">
+      <RateMetric label="STREAM RATE" value={readRate(channelValues, streamRateChannel)} channelName={streamRateChannel} />
+      <RateMetric label="WORKER RATE" value={readRate(channelValues, workerRateChannel)} channelName={workerRateChannel} />
+    </div> : null}
     <Separator />
     <div className="grid grid-cols-2 gap-2 text-xs">
-      {isStream ? <>
-        <RateMetric label="STREAM RATE" value={readRate(channelValues, streamRateChannel)} channelName={streamRateChannel} />
-        <RateMetric label="WORKER RATE" value={readRate(channelValues, workerRateChannel)} channelName={workerRateChannel} />
-      </> : null}
       <div className="rounded-md border bg-muted/40 px-3 py-2">
         <div className="text-muted-foreground">DEVICE</div>
         <div className="truncate">{task.arguments?.module_instance_name || "UNBOUND"}</div>
@@ -88,7 +88,7 @@ function LabJackTaskCard({task}: {task: any}) {
         />
       </> : null}
     </div>
-  </>;
+  </div>;
 }
 
 export const taskCards = [
