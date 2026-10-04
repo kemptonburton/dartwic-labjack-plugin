@@ -1,51 +1,14 @@
 import React from "@dartwic/interface-sdk/react";
 import {defineTaskConfig, useTaskConfigBridge} from "@dartwic/interface-sdk/tasks";
 import {
-  Button, Input, Label, ScrollArea, ScrollBar, Select, SelectContent,
-  SelectItem, SelectTrigger, SelectValue,
+  Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@dartwic/interface-sdk/ui/general";
 import {
-  ChannelComboBox, convertChannelReferenceToChannelName, ModuleInstanceSelect,
+  ChannelComboBox, convertChannelReferenceToChannelName, TaskBindingTable,
 } from "@dartwic/interface-sdk/ui/dartwic";
 import {
   analogRangeOptions, buildTaskPayload, normalizeAnalogRange, normalizeMappings, stableStringify,
 } from "./shared";
-
-function MappingRow({mapping, isStream, onChange, onRemove}: any) {
-  const analog = isStream && mapping.channelType === "analog";
-  return (
-    <div className="grid items-center gap-2 rounded-md border p-3"
-      style={{gridTemplateColumns: analog
-        ? "110px 90px 90px 120px minmax(0, 1fr) auto"
-        : isStream ? "110px 90px minmax(0, 1fr) auto" : "90px minmax(0, 1fr) auto"}}>
-      {isStream ? <Select value={mapping.channelType}
-        onValueChange={(value: string) => onChange({...mapping, channelType: value})}>
-        <SelectTrigger><SelectValue /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="analog">ANALOG</SelectItem>
-          <SelectItem value="digital">DIGITAL</SelectItem>
-        </SelectContent>
-      </Select> : null}
-      <Input type="number" min="0" value={mapping.register} placeholder="REGISTER"
-        onChange={(event: any) => onChange({...mapping, register: event.target.value})} />
-      {analog ? <>
-        <Input type="number" min="0" max="253" value={mapping.negativeChannel} placeholder="NEG CH"
-          onChange={(event: any) => onChange({...mapping, negativeChannel: event.target.value})} />
-        <Select value={normalizeAnalogRange(mapping.range)}
-          onValueChange={(value: string) => onChange({...mapping, range: value})}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
-          <SelectContent>{analogRangeOptions.map((option) =>
-            <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
-        </Select>
-      </> : null}
-      <ChannelComboBox mode={isStream ? "write" : "read"} showFieldSelector={false}
-        initialValue={mapping.channel} placeholder="SELECT FIXED CHANNEL"
-        onSelect={(value: string) => onChange({...mapping, channel: convertChannelReferenceToChannelName(value)})}
-        className="min-w-0 w-full" />
-      <Button variant="ghost" onClick={onRemove}>REMOVE</Button>
-    </div>
-  );
-}
 
 function LabJackTaskConfig({task, operation, onSaved, onClose, taskEditor}: any) {
   const isStream = task.task_type === "labjack_t7.stream";
@@ -66,6 +29,66 @@ function LabJackTaskConfig({task, operation, onSaved, onClose, taskEditor}: any)
     normalizeMappings(task.arguments, convertChannelReferenceToChannelName),
   ), [isStream, task]);
   const isDirty = stableStringify(payload) !== stableStringify(initialPayload);
+  const moduleConnection = React.useMemo(() => ({
+    pluginId: "labjack_t7",
+    moduleTypeIds: ["labjack_t7"],
+    value: selectedInstance,
+    onValueChange: setSelectedInstance,
+    placeholder: "SELECT ONE LABJACK T7",
+    description: "One hardware stream may run per LabJack device.",
+    showConnectionStatus: true,
+  }), [selectedInstance]);
+  const tableInputClass = "h-8 min-w-0 rounded-none border-0 bg-transparent px-0 py-0 text-xs normal-case shadow-none ring-offset-transparent focus-visible:ring-0 focus-visible:ring-offset-0";
+  const tableSelectClass = "h-8 min-h-0 w-full rounded-none border-0 bg-transparent px-0 py-0 text-xs uppercase shadow-none focus:ring-0";
+  const columns = [
+    ...(isStream ? [{
+      key: "channelType", label: "TYPE", width: "8rem",
+      render: (mapping: any, _index: number, update: (mapping: any) => void) => (
+        <Select value={mapping.channelType} onValueChange={(value: string) => update({...mapping, channelType: value})}>
+          <SelectTrigger className={tableSelectClass}><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="analog">ANALOG</SelectItem>
+            <SelectItem value="digital">DIGITAL</SelectItem>
+          </SelectContent>
+        </Select>
+      ),
+    }] : []),
+    {
+      key: "register", label: "ADDRESS", width: "7rem",
+      render: (mapping: any, _index: number, update: (mapping: any) => void) => (
+        <Input type="number" min="0" value={mapping.register} placeholder="ADDRESS" className={tableInputClass}
+          onChange={(event: any) => update({...mapping, register: event.target.value})} />
+      ),
+    },
+    ...(isStream ? [
+      {
+        key: "negativeChannel", label: "NEGATIVE", width: "7rem",
+        render: (mapping: any, _index: number, update: (mapping: any) => void) => mapping.channelType === "analog" ? (
+          <Input type="number" min="0" max="253" value={mapping.negativeChannel} placeholder="NEG CH" className={tableInputClass}
+            onChange={(event: any) => update({...mapping, negativeChannel: event.target.value})} />
+        ) : <span className="text-xs text-muted-foreground">—</span>,
+      },
+      {
+        key: "range", label: "RANGE", width: "9rem",
+        render: (mapping: any, _index: number, update: (mapping: any) => void) => mapping.channelType === "analog" ? (
+          <Select value={normalizeAnalogRange(mapping.range)} onValueChange={(value: string) => update({...mapping, range: value})}>
+            <SelectTrigger className={tableSelectClass}><SelectValue /></SelectTrigger>
+            <SelectContent>{analogRangeOptions.map((option) =>
+              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
+          </Select>
+        ) : <span className="text-xs text-muted-foreground">—</span>,
+      },
+    ] : []),
+    {
+      key: "channel", label: "CHANNEL", width: "minmax(14rem,1.5fr)",
+      render: (mapping: any, _index: number, update: (mapping: any) => void) => (
+        <ChannelComboBox key={mapping.channel || mapping.id} mode={isStream ? "write" : "read"} showFieldSelector={false}
+          initialValue={mapping.channel} placeholder="SELECT FIXED CHANNEL"
+          onSelect={(value: string) => update({...mapping, channel: convertChannelReferenceToChannelName(value)})}
+          className="min-w-0 w-full" channelComboboxClassName={tableInputClass} />
+      ),
+    },
+  ];
 
   async function saveTask() {
     if (!selectedInstance) return setErrorMessage("SELECT A LABJACK T7 MODULE INSTANCE.");
@@ -87,17 +110,11 @@ function LabJackTaskConfig({task, operation, onSaved, onClose, taskEditor}: any)
   useTaskConfigBridge(taskEditor, {
     isDirty, isSaving, canSave: true, errorMessage,
     saveLabel: "SAVE", cancelLabel: "CANCEL", onSave: saveTask, onCancel: onClose,
+    moduleConnection,
   });
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
-      <div className="space-y-2">
-        <Label>MODULE CONNECTION</Label>
-        <ModuleInstanceSelect pluginId="labjack_t7" moduleTypeIds={["labjack_t7"]}
-          value={selectedInstance} onValueChange={setSelectedInstance}
-          placeholder="SELECT ONE LABJACK T7" />
-        <div className="text-xs text-muted-foreground">One hardware stream may run per LabJack device.</div>
-      </div>
       {isStream ? <div className="grid grid-cols-2 gap-3">
         <div className="space-y-2"><Label>TARGET SCAN RATE (HZ)</Label>
           <Input type="number" min="1" value={targetScanRate}
@@ -106,24 +123,19 @@ function LabJackTaskConfig({task, operation, onSaved, onClose, taskEditor}: any)
           <Input type="number" min="1" value={scansPerRead}
             onChange={(event: any) => setScansPerRead(event.target.value)} /></div>
       </div> : null}
-      <ScrollArea className="min-h-0 flex-1" type="always">
-        <div className="space-y-2 pr-4">
-          <div className="flex items-center justify-between gap-2">
-            <Label>{isStream ? "STREAM MAPPINGS (DEVICE → RAPID)" : "DIGITAL WRITES (RAPID → DEVICE)"}</Label>
-            <Button variant="outline" onClick={() => setMappings((current: any[]) => current.concat([{
-              id: `mapping-new-${nextId.current++}`, channelType: "analog", register: "",
-              negativeChannel: "199", range: "10", channel: "",
-            }]))}>ADD</Button>
-          </div>
-          {mappings.length === 0
-            ? <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">NONE CONFIGURED</div>
-            : mappings.map((mapping: any, index: number) => <MappingRow key={mapping.id}
-              mapping={mapping} isStream={isStream}
-              onChange={(next: any) => setMappings((current: any[]) => current.map((item, itemIndex) => itemIndex === index ? next : item))}
-              onRemove={() => setMappings((current: any[]) => current.filter((_, itemIndex) => itemIndex !== index))} />)}
-        </div>
-        <ScrollBar orientation="vertical" />
-      </ScrollArea>
+      <TaskBindingTable
+        title={isStream ? "STREAM MAPPINGS (DEVICE → RAPID)" : "DIGITAL WRITES (RAPID → DEVICE)"}
+        bindings={mappings}
+        onBindingsChange={setMappings}
+        bindingTypes={[]}
+        columns={columns}
+        addLabel="ADD MAPPING"
+        minTableWidth={isStream ? "54rem" : "32rem"}
+        createBinding={() => ({
+          id: `mapping-new-${nextId.current++}`, channelType: "analog", register: "",
+          negativeChannel: "199", range: "10", channel: "",
+        })}
+      />
     </div>
   );
 }

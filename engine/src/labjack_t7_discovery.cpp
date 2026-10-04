@@ -6,10 +6,23 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace {
+constexpr auto kNetworkDiscoveryTimeout = std::chrono::milliseconds(250);
+
+void configureBoundedNetworkDiscovery() {
+    // Keep LJM's process-wide network scans bounded so an unavailable adapter
+    // cannot stall the plugin discovery loop indefinitely.
+    LJM_WriteLibraryConfigS("LJM_LISTALL_NUM_ATTEMPTS_ETHERNET", 1.0);
+    LJM_WriteLibraryConfigS("LJM_LISTALL_NUM_ATTEMPTS_WIFI", 1.0);
+    LJM_WriteLibraryConfigS("LJM_LISTALL_TIMEOUT_MS_ETHERNET", kNetworkDiscoveryTimeout.count());
+    LJM_WriteLibraryConfigS("LJM_LISTALL_TIMEOUT_MS_WIFI", kNetworkDiscoveryTimeout.count());
+}
+
 std::string safeName(std::string value) {
     for (char& character : value) {
         if (!std::isalnum(static_cast<unsigned char>(character))) character = '_';
@@ -28,13 +41,6 @@ std::string connectionName(int connection_type) {
         case LJM_ctTCP: return "TCP";
         default: return "ANY";
     }
-}
-
-std::string ipAddress(int numeric_ip) {
-    if (numeric_ip == LJM_NO_IP_ADDRESS) return {};
-    std::array<char, LJM_MAX_NAME_SIZE> buffer{};
-    if (LJM_NumberToIP(static_cast<unsigned int>(numeric_ip), buffer.data()) != LJME_NOERROR) return {};
-    return buffer.data();
 }
 
 nlohmann::json ranges(int start, int end) {
@@ -83,6 +89,56 @@ nlohmann::json defaultAnalogMappings(const std::string& instance_name, int start
     }
     return mappings;
 }
+
+std::string ipAddress(int numeric_ip) {
+    if (numeric_ip == LJM_NO_IP_ADDRESS) return {};
+    std::array<char, LJM_MAX_NAME_SIZE> buffer{};
+    if (LJM_NumberToIP(static_cast<unsigned int>(numeric_ip), buffer.data()) != LJME_NOERROR) return {};
+    return buffer.data();
+}
+
+nlohmann::json scanLjmDevices() {
+    auto devices = nlohmann::json::array();
+    std::string last_error;
+    std::unordered_set<int> seen_serials;
+    auto scan_connection = [&](const char* connection_filter) {
+        std::array<int, LJM_LIST_ALL_SIZE> device_types{};
+        std::array<int, LJM_LIST_ALL_SIZE> connection_types{};
+        std::array<int, LJM_LIST_ALL_SIZE> serial_numbers{};
+        std::array<int, LJM_LIST_ALL_SIZE> ip_addresses{};
+        int found = 0;
+        const int error = LJM_ListAllS("T7", connection_filter, &found, device_types.data(),
+            connection_types.data(), serial_numbers.data(), ip_addresses.data());
+        if (error != LJME_NOERROR) {
+            // Auto-IP is optional. Its absence must not hide devices found through
+            // LJM's normal USB or broadcast discovery paths.
+            if (error != LJME_AUTO_IPS_FILE_NOT_FOUND && error != LJME_AUTO_IPS_FILE_INVALID) {
+                std::array<char, LJM_MAX_NAME_SIZE> error_text{};
+                LJM_ErrorToString(error, error_text.data());
+                if (!last_error.empty()) last_error += "; ";
+                last_error += std::string(connection_filter) + ": " + error_text.data();
+            }
+            return;
+        }
+        found = std::clamp(found, 0, static_cast<int>(LJM_LIST_ALL_SIZE));
+        for (int index = 0; index < found; ++index) {
+            if (!seen_serials.insert(serial_numbers[index]).second) continue;
+            devices.push_back({
+                {"device_type", device_types[index]},
+                {"serial_number", serial_numbers[index]},
+                {"connection_type", connectionName(connection_types[index])},
+                {"connection_type_code", connection_types[index]},
+                {"ip_address", ipAddress(ip_addresses[index])}
+            });
+        }
+    };
+
+    // Prefer USB when one device is reachable over multiple transports.
+    scan_connection("USB");
+    scan_connection("ETHERNET");
+    scan_connection("WIFI");
+    return {{"devices", std::move(devices)}, {"last_error", std::move(last_error)}};
+}
 }
 
 LabJackT7DeviceFinder::LabJackT7DeviceFinder(
@@ -96,14 +152,15 @@ LabJackT7DeviceFinder::LabJackT7DeviceFinder(
     digital_io_start_ = std::clamp(discovery.value("digital_io_start", 0), 0, 22);
     digital_io_end_ = std::clamp(discovery.value("digital_io_end", 22), digital_io_start_, 22);
     scan_interval_ = std::chrono::seconds(std::clamp(discovery.value("scan_interval_seconds", 3), 1, 300));
+    configureBoundedNetworkDiscovery();
 }
 
 void LabJackT7DeviceFinder::tick() {
     std::scoped_lock lock(mutex_);
     if (!enabled_ || api_ == nullptr) return;
     reconcileAnnouncements();
-    if (std::chrono::steady_clock::now() < next_scan_) return;
-    scanLocked();
+    collectScanLocked();
+    if (!scan_in_progress_ && std::chrono::steady_clock::now() >= next_scan_) startScanLocked();
 }
 
 nlohmann::json LabJackT7DeviceFinder::settings() const {
@@ -113,17 +170,18 @@ nlohmann::json LabJackT7DeviceFinder::settings() const {
         {"suggest_analog_inputs", suggest_analog_inputs_},
         {"analog_input_start", analog_input_start_}, {"analog_input_end", analog_input_end_},
         {"digital_io_start", digital_io_start_}, {"digital_io_end", digital_io_end_},
-        {"devices", last_devices_}, {"device_count", last_devices_.size()}, {"last_error", last_error_}
+        {"devices", last_devices_}, {"device_count", last_devices_.size()},
+        {"scan_in_progress", scan_in_progress_}, {"last_error", last_error_}
     };
 }
 
 nlohmann::json LabJackT7DeviceFinder::scanNow() {
     {
         std::scoped_lock lock(mutex_);
-        next_scan_ = {};
         if (enabled_ && api_ != nullptr) {
             reconcileAnnouncements();
-            scanLocked();
+            collectScanLocked();
+            if (!scan_in_progress_) startScanLocked();
         }
     }
     return settings();
@@ -140,18 +198,37 @@ void LabJackT7DeviceFinder::reconcileAnnouncements() {
             const auto request = api_->getInterfaceUiRequest(request_id->second);
             const std::string status = request.value("status", "pending");
             if (status == "pending") {
+                const bool muted = request.value("muted", false);
+                const bool was_muted = last_mute_states_[*announced];
+                last_mute_states_[*announced] = muted;
+                if (was_muted && !muted) {
+                    request_ids_.erase(request_id);
+                    announced = announced_ids_.erase(announced);
+                    continue;
+                }
                 ++announced;
                 continue;
             }
             // A terminal discovery request can be announced again only when its
             // matching live module no longer exists.
             request_ids_.erase(request_id);
+            last_mute_states_.erase(*announced);
             announced = announced_ids_.erase(announced);
         } catch (const std::exception&) {
             // Retain pending state through transient broker failures so a scan
             // does not create duplicate discovery prompts.
             ++announced;
         }
+    }
+}
+
+bool LabJackT7DeviceFinder::isDiscoveryMuted(const std::string& discovery_id) const {
+    if (api_ == nullptr) return false;
+    try {
+        return api_->isNotificationMuted("device-discovery:" + discovery_id);
+    } catch (...) {
+        // A transient preference-store failure must not disable discovery.
+        return false;
     }
 }
 
@@ -166,57 +243,61 @@ bool LabJackT7DeviceFinder::hasConfiguredModule(const int serial_number) const {
     return false;
 }
 
-void LabJackT7DeviceFinder::scanLocked() {
-    next_scan_ = std::chrono::steady_clock::now() + scan_interval_;
-    last_error_.clear();
-    last_devices_ = nlohmann::json::array();
-    std::unordered_set<int> seen_serials;
-    auto scan_connection = [&](const char* connection_filter) {
-        std::array<int, LJM_LIST_ALL_SIZE> device_types{};
-        std::array<int, LJM_LIST_ALL_SIZE> connection_types{};
-        std::array<int, LJM_LIST_ALL_SIZE> serial_numbers{};
-        std::array<int, LJM_LIST_ALL_SIZE> ip_addresses{};
-        int found = 0;
-        const int error = LJM_ListAllS("T7", connection_filter, &found, device_types.data(),
-            connection_types.data(), serial_numbers.data(), ip_addresses.data());
-        if (error != LJME_NOERROR) {
-            // An Auto-IP file is optional. A missing or invalid file must not hide
-            // USB devices, so network enumeration failures are isolated here.
-            if (error != LJME_AUTO_IPS_FILE_NOT_FOUND && error != LJME_AUTO_IPS_FILE_INVALID) {
-                std::array<char, LJM_MAX_NAME_SIZE> error_text{};
-                LJM_ErrorToString(error, error_text.data());
-                if (!last_error_.empty()) last_error_ += "; ";
-                last_error_ += std::string(connection_filter) + ": " + error_text.data();
-            }
-            return;
-        }
-        found = std::clamp(found, 0, static_cast<int>(LJM_LIST_ALL_SIZE));
-        for (int index = 0; index < found; ++index) {
-            if (!seen_serials.insert(serial_numbers[index]).second) continue;
-            last_devices_.push_back({
-                {"serial_number", serial_numbers[index]},
-                {"connection_type", connectionName(connection_types[index])},
-                {"ip_address", ipAddress(ip_addresses[index])}
-            });
-            announce(device_types[index], connection_types[index], serial_numbers[index], ip_addresses[index]);
-        }
-    };
+void LabJackT7DeviceFinder::startScanLocked() {
+    scan_in_progress_ = true;
+    try {
+        scan_future_ = std::async(std::launch::async, scanLjmDevices);
+    } catch (const std::exception& error) {
+        scan_in_progress_ = false;
+        next_scan_ = std::chrono::steady_clock::now() + scan_interval_;
+        last_error_ = std::string("Unable to start LJM discovery: ") + error.what();
+    }
+}
 
-    // Prefer USB when a device is reachable over more than one transport.
-    scan_connection("USB");
-    scan_connection("ETHERNET");
-    scan_connection("WIFI");
+void LabJackT7DeviceFinder::collectScanLocked() {
+    if (!scan_in_progress_ || !scan_future_.valid()
+        || scan_future_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+
+    scan_in_progress_ = false;
+    next_scan_ = std::chrono::steady_clock::now() + scan_interval_;
+    try {
+        auto result = scan_future_.get();
+        last_error_ = result.value("last_error", std::string{});
+        last_devices_ = result.value("devices", nlohmann::json::array());
+        for (const auto& device : last_devices_) {
+            try {
+                announce(
+                    device.value("device_type", LJM_dtT7),
+                    device.value("connection_type_code", LJM_ctANY),
+                    device.value("serial_number", 0),
+                    device.value("ip_address", std::string{}));
+            } catch (const std::exception& error) {
+                if (!last_error_.empty()) last_error_ += "; ";
+                last_error_ += std::string("Notification: ") + error.what();
+            }
+        }
+    } catch (const std::exception& error) {
+        last_devices_ = nlohmann::json::array();
+        last_error_ = std::string("LJM discovery failed: ") + error.what();
+    }
 }
 
 void LabJackT7DeviceFinder::announce(
     int device_type,
     int connection_type,
     int serial_number,
-    int numeric_ip) {
+    const std::string& ip) {
     const std::string discovery_id = "t7:" + std::to_string(serial_number);
-    if (hasConfiguredModule(serial_number) || announced_ids_.contains(discovery_id)) return;
+    const bool already_configured = hasConfiguredModule(serial_number);
+    const bool muted = !already_configured && isDiscoveryMuted(discovery_id);
+    const bool was_muted = last_mute_states_[discovery_id];
+    last_mute_states_[discovery_id] = muted;
+    if (was_muted && !muted) {
+        request_ids_.erase(discovery_id);
+        announced_ids_.erase(discovery_id);
+    }
+    if (muted || already_configured || announced_ids_.contains(discovery_id)) return;
     const std::string connection = connectionName(connection_type);
-    const std::string ip = ipAddress(numeric_ip);
     const std::string identifier = std::to_string(serial_number);
     const std::string instance_name = safeName("labjack_t7_" + identifier);
     const auto channels = suggest_analog_inputs_
@@ -271,10 +352,13 @@ void LabJackT7DeviceFinder::announce(
             }},
             {"tasks", std::move(tasks)}
         }}
-    }, {
-        {"request_key", discovery_id},
-        {"merge_key", "module-discovery"},
-        {"reopen_completed", true}
+        }, {
+            {"request_key", discovery_id},
+            {"merge_key", "module-discovery"},
+            {"silenceable", true},
+            {"mute_scope", "engine"},
+            {"notification_id", "labjack_t7:device-discovery:" + discovery_id},
+            {"reopen_completed", true}
         });
     } catch (const std::exception& error) {
         throw std::runtime_error(std::string("Unable to open the discovery interface request: ") + error.what());

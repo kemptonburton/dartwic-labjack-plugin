@@ -2,7 +2,7 @@ import React from "@dartwic/interface-sdk/react";
 import {LjmRuntimeStatus} from "./ljmRuntime";
 
 export function LabJackPluginSettings({operation}: any) {
-  return <div className="max-w-3xl">
+  return <div className="w-full">
     <LjmRuntimeStatus operation={operation} />
   </div>;
 }

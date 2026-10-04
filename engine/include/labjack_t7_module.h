@@ -12,6 +12,7 @@ public:
     ~LabJackT7Module() override;
 
     LabJackT7Controller& controller();
+    void monitorConnection();
 
 private:
     std::string instance_name_;

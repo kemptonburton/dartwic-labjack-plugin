@@ -5,7 +5,6 @@
 #include <mutex>
 #include <optional>
 #include <string>
-#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -26,6 +25,7 @@ public:
     ~LabJackT7Controller();
 
     bool isConnected() const;
+    void monitorConnection();
     void applyDigitalWrite(const nlohmann::json& arguments, DARTWIC::API::TaskRuntime& task_runtime);
     void runStreamWorker(DARTWIC::API::TaskRuntime& task_runtime);
     void stopStream();
@@ -100,7 +100,6 @@ private:
     std::mutex stream_mutex_;
     std::string active_stream_task_key_;
     int handle_ = -1;
-    std::jthread connection_thread_;
 };
 
 #endif

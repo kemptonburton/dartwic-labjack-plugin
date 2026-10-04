@@ -97,27 +97,20 @@ LabJackT7Controller::LabJackT7Controller(
     module_->dartwic->upsertChannelField(instance_name_ + ".info.connected", ChannelField::UNITS, std::string{"bool"},
         DARTWIC::API::ChannelStorage::Fixed);
     ljm_library_ready_ = validateLjmLibrary();
-    connection_thread_ = std::jthread([this](const std::stop_token stop_token) {
-        connectionLoopStart();
-        while (!stop_token.stop_requested()) {
-            connectionLoop();
-            for (int interval = 0; interval < 10 && !stop_token.stop_requested(); ++interval) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
-        }
-        connectionLoopEnd();
-    });
+    connectionLoopStart();
 }
 
 LabJackT7Controller::~LabJackT7Controller() {
-    connection_thread_.request_stop();
-    if (connection_thread_.joinable()) connection_thread_.join();
-    stopStream();
-    disconnect();
+    connectionLoopEnd();
 }
 
 bool LabJackT7Controller::isConnected() const {
     return connected_.load();
+}
+
+void LabJackT7Controller::monitorConnection() {
+    module_->dartwic->setChannel(instance_name_ + ".info.connected");
+    connectionLoop();
 }
 
 double LabJackT7Controller::query(const std::string& channel, double default_value) const {
@@ -172,7 +165,6 @@ void LabJackT7Controller::connectionLoop() {
     }
 
     verifyConnection();
-    std::this_thread::sleep_for(std::chrono::seconds(1));
 }
 
 void LabJackT7Controller::connectionLoopEnd() {
@@ -312,7 +304,7 @@ void LabJackT7Controller::handleError(int error_number, const std::string& opera
         "LabJack operation failed.\n[Operation: " + operation + "]\n[LJM Error: " + std::string(error_string) + "]",
         {instance_name_ + ".info.connected"},
         "Check the LabJack connection, stream configuration, and device state.",
-        (operation == "connect" || operation == "verify_connection") ? 5 : 0
+        0
     );
 }
 

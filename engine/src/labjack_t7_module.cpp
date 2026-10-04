@@ -19,3 +19,7 @@ LabJackT7Module::~LabJackT7Module() = default;
 LabJackT7Controller& LabJackT7Module::controller() {
     return *controller_;
 }
+
+void LabJackT7Module::monitorConnection() {
+    controller_->monitorConnection();
+}

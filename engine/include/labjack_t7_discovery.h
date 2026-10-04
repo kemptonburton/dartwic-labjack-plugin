@@ -3,6 +3,7 @@
 #include <sdk/sdk_api.h>
 
 #include <chrono>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <nlohmann/json.hpp>
@@ -19,10 +20,12 @@ public:
     nlohmann::json scanNow();
 
 private:
-    void scanLocked();
-    void announce(int device_type, int connection_type, int serial_number, int ip_address);
+    void startScanLocked();
+    void collectScanLocked();
+    void announce(int device_type, int connection_type, int serial_number, const std::string& ip_address);
     void reconcileAnnouncements();
     bool hasConfiguredModule(int serial_number) const;
+    bool isDiscoveryMuted(const std::string& discovery_id) const;
 
     DARTWIC::API::SDK_API* api_{};
     bool enabled_{true};
@@ -33,10 +36,13 @@ private:
     int digital_io_end_{22};
     std::chrono::seconds scan_interval_{3};
     std::chrono::steady_clock::time_point next_scan_{};
+    std::future<nlohmann::json> scan_future_;
+    bool scan_in_progress_{false};
     nlohmann::json last_devices_ = nlohmann::json::array();
     std::string last_error_;
     std::unordered_set<std::string> announced_ids_;
     std::unordered_map<std::string, std::string> request_ids_;
+    std::unordered_map<std::string, bool> last_mute_states_;
     mutable std::mutex mutex_;
 };
 

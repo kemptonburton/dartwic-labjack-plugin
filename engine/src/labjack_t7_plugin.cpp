@@ -42,7 +42,7 @@ std::shared_ptr<LabJackT7Module> requireModule(
     return module;
 }
 
-std::vector<std::string> mappingChannels(const nlohmann::json& arguments) {
+std::vector<std::string> mappingChannels(const nlohmann::json& arguments, bool allow_empty = false) {
     std::vector<std::string> channels;
     const auto mappings = arguments.value("mappings", nlohmann::json::array());
     if (!mappings.is_array()) throw std::runtime_error("LabJack task mappings must be an array.");
@@ -55,7 +55,7 @@ std::vector<std::string> mappingChannels(const nlohmann::json& arguments) {
         if (channel.empty()) throw std::runtime_error("LabJack mapping channels cannot be empty.");
         channels.push_back(std::move(channel));
     }
-    if (channels.empty()) throw std::runtime_error("Configure at least one LabJack mapping.");
+    if (channels.empty() && !allow_empty) throw std::runtime_error("Configure at least one LabJack mapping.");
     return channels;
 }
 
@@ -81,7 +81,7 @@ void configureDigitalWriteAuthority(
 void configureDigitalWrite(DARTWIC::API::SDK_API* api, DARTWIC::API::TaskRuntime& runtime) {
     const auto& arguments = runtime.getArguments();
     requireModule(api, arguments);
-    auto channels = mappingChannels(arguments);
+    auto channels = mappingChannels(arguments, true);
     for (const auto& channel : channels) {
         api->createFixedChannel(channel);
         api->createFixedChannel(stateChannel(channel));
@@ -95,7 +95,7 @@ void configureStream(DARTWIC::API::SDK_API* api, DARTWIC::API::TaskRuntime& runt
     requireModule(api, arguments);
     api->removeChannel(runtime.getTaskName() + "_stream_worker_read_rate");
     const std::string controller = "task:" + runtime.getTaskName();
-    for (const auto& channel : mappingChannels(arguments)) {
+    for (const auto& channel : mappingChannels(arguments, true)) {
         api->createFixedChannel(channel);
         api->upsertChannelField(channel, DARTWIC::API::ChannelField::CONTROL_OWNER,
             controller, DARTWIC::API::ChannelStorage::Fixed);
@@ -192,6 +192,16 @@ void LabJackT7Plugin::onPluginLoaded() {
         .on_loop = [device_finder]() { device_finder->tick(); },
         .target_frequency_hz = 1.0,
     });
+    dartwic->registerLoop("connection_monitor", "LabJack T7 Connection Monitor", {
+        .on_loop = [this]() {
+            for (const auto& summary : dartwic->getModuleInstances("labjack_t7")) {
+                const auto module = std::dynamic_pointer_cast<LabJackT7Module>(
+                    dartwic->getModuleInstance(summary.name));
+                if (module) module->monitorConnection();
+            }
+        },
+        .target_frequency_hz = 1.0,
+    });
 
     dartwic->registerModuleType({.id = "labjack_t7", .name = "LabJack T7"});
 
@@ -223,6 +233,9 @@ void LabJackT7Plugin::onPluginLoaded() {
     };
     stream_task.on_configure = [this](const auto&, DARTWIC::API::TaskRuntime& runtime) {
         configureStream(dartwic, runtime);
+    };
+    stream_task.on_start = [](const auto&, DARTWIC::API::TaskRuntime& runtime) {
+        mappingChannels(runtime.getArguments());
     };
     stream_task.on_task = [this](const auto&, DARTWIC::API::TaskRuntime& runtime, double) {
         auto module = requireModule(dartwic, runtime.getArguments());

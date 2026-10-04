@@ -1,5 +1,5 @@
 import React from "@dartwic/interface-sdk/react";
-import {Button} from "@dartwic/interface-sdk/ui/general";
+import {ManualRefreshButton} from "@dartwic/interface-sdk/ui/dartwic";
 
 function version(value: unknown) {
   const numeric = Number(value);
@@ -31,33 +31,35 @@ export function LjmRuntimeStatus({operation, compact = false}: {operation: any; 
   const ready = Boolean(info?.library_ready && info?.version_match && info?.constants_ok);
 
   return (
-    <div>
-      <div className="mb-3 flex items-end justify-between gap-3">
-        <div>
-          <div className="text-xs font-medium text-muted-foreground">DRIVER AND PLUGIN COMPATIBILITY</div>
-        </div>
+    <div className="w-full text-xs">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="font-medium text-muted-foreground">DRIVER AND PLUGIN COMPATIBILITY</div>
         <div className="flex items-center gap-2">
-          <span className={ready ? "text-xs text-emerald-300" : "text-xs text-destructive"}>
-            {loading ? "CHECKING…" : ready ? "READY" : "CHECK INSTALL"}
+          <span className={loading
+            ? "inline-flex items-center rounded-md border border-border bg-muted px-2.5 py-1 font-medium text-muted-foreground"
+            : ready
+              ? "inline-flex items-center rounded-md border border-green-border bg-green-muted px-2.5 py-1 font-medium text-green"
+              : "inline-flex items-center rounded-md border border-red-border bg-red-muted px-2.5 py-1 font-medium text-red"}>
+            {loading ? "CHECKING…" : ready ? "READY" : "NOT READY"}
           </span>
-          <Button variant="outline" disabled={loading} onClick={refresh}>REFRESH</Button>
+          <ManualRefreshButton tooltip="REFRESH" isRefreshing={loading} onClick={refresh} />
         </div>
       </div>
-      <div className="grid grid-cols-2 divide-x divide-border/70 border-y border-border/70 text-sm">
+      <div className="grid grid-cols-2 divide-x divide-border/70 border-y border-border/70">
         <div className="px-3 py-3">
-          <div className="text-[11px] text-muted-foreground">PLUGIN SDK</div>
+          <div className="text-muted-foreground">PLUGIN SDK</div>
           <div>{version(info?.plugin_sdk_version)}</div>
         </div>
         <div className="px-3 py-3">
-          <div className="text-[11px] text-muted-foreground">SYSTEM INSTALL</div>
+          <div className="text-muted-foreground">SYSTEM INSTALL</div>
           <div>{version(info?.system_runtime_version)}</div>
         </div>
       </div>
-      {!compact ? <div className="border-b border-border/70 px-3 py-3 text-sm">
-        <div className="text-[11px] text-muted-foreground">LOADED LIBRARY</div>
-        <div className="break-all font-mono text-xs">{info?.loaded_library_path || "UNKNOWN"}</div>
+      {!compact ? <div className="border-b border-border/70 px-3 py-3">
+        <div className="text-muted-foreground">LOADED LIBRARY</div>
+        <div className="break-all">{info?.loaded_library_path || "UNKNOWN"}</div>
       </div> : null}
-      {error ? <div className="border-b border-border/70 px-3 py-3 text-xs text-destructive">{error}</div> : null}
+      {error ? <div className="border-b border-border/70 px-3 py-3 text-red">{error}</div> : null}
     </div>
   );
 }
