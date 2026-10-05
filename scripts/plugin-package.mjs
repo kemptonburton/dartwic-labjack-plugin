@@ -1,4 +1,5 @@
 import path from "node:path";
+import {verifySdkLock} from "./plugin-sdk-lock.mjs";
 
 import {
   getNpmCommand,
@@ -184,6 +185,7 @@ async function createPluginArchive() {
 }
 
 async function main() {
+  await verifySdkLock();
   const argv = process.argv.slice(2);
   const requestedVersion = getRequestedVersion(argv);
   if (requestedVersion) {

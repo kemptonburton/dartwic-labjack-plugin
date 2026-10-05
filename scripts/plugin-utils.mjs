@@ -174,6 +174,8 @@ export async function runCommand(command, args, options = {}) {
 }
 
 export async function removePath(targetPath) {
+  const absolute = path.resolve(targetPath);
+  if (!absolute.startsWith(repoRoot + path.sep)) throw new Error(`Refusing to remove a path outside the plugin repository: ${absolute}`);
   await fs.rm(targetPath, { recursive: true, force: true });
 }
 

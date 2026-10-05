@@ -57,7 +57,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@dartwic/interface-sdk": path.resolve(__dirname, "..", "DARTWIC", "sdk", "interface_plugin_sdk"),
+      "@dartwic/interface-sdk": path.resolve(__dirname, "interface", "sdk"),
     },
   },
 });

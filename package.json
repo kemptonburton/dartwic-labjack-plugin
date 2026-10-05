@@ -1,7 +1,7 @@
 {
   "name": "labjack-t7-plugin",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "scripts": {
     "build": "vite build",
@@ -16,7 +16,7 @@
     "deploy:interface": "node ./scripts/plugin-deploy.mjs --interface"
   },
   "dependencies": {
-    "@dartwic/interface-sdk": "file:../DARTWIC/sdk/interface_plugin_sdk"
+    "@dartwic/interface-sdk": "file:interface/sdk"
   },
   "devDependencies": {
     "@types/node": "^24.9.1",

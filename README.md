@@ -2,6 +2,10 @@
 
 Current DARTWIC 2.0 engine and interface plugin for LabJack T7 devices through the LabJack LJM runtime.
 
+Engine and Interface SDK snapshots are bundled under `engine/include/sdk` and
+`interface/sdk`; no private DARTWIC source checkout is needed to build. Packaging
+checks their hashes against `sdk-lock.json`. Use `npm ci` for reproducible installs.
+
 ## Features
 
 - Enumerates local USB, Ethernet, and Wi-Fi T7 devices with `LJM_ListAllS`.
