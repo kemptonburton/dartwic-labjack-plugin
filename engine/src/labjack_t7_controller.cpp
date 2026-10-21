@@ -142,7 +142,7 @@ void LabJackT7Controller::consoleError(
     const std::string& resolution,
     int auto_ack
 ) const {
-    module_->dartwic->consoleError(title, description, std::move(channels), resolution, auto_ack);
+    module_->dartwic->consoleError(title, description, std::move(channels), resolution, auto_ack, 10.0);
 }
 
 void LabJackT7Controller::connectionLoopStart() {
@@ -548,14 +548,11 @@ std::vector<LabJackT7Controller::DigitalWriteMapping> LabJackT7Controller::parse
 }
 
 void LabJackT7Controller::publishTaskDiagnostic(
-    DARTWIC::API::TaskRuntime& task_runtime,
-    const std::string& suffix,
-    ChannelValue value
+    StreamState& state,
+    size_t index,
+    double value
 ) const {
-    const auto channel = task_runtime.getTaskName() + suffix;
-    module_->dartwic->upsertChannelField(channel, ChannelField::VALUE, std::move(value),
-        DARTWIC::API::ChannelStorage::Fixed);
-    configureObserveOnlyChannel(channel, taskController(task_runtime));
+    (void)module_->dartwic->upsertChannel(state.diagnostics[index], value);
 }
 
 void LabJackT7Controller::configureObserveOnlyChannel(
@@ -621,10 +618,25 @@ uint64_t LabJackT7Controller::unixNanosecondsNow() const {
     );
 }
 
-void LabJackT7Controller::applyDigitalWrite(
-    const nlohmann::json& arguments,
-    DARTWIC::API::TaskRuntime& task_runtime
-) {
+std::shared_ptr<LabJackT7Controller::DigitalWriteState> LabJackT7Controller::prepareDigitalWrite(
+    const nlohmann::json& arguments) {
+    auto state = std::make_shared<DigitalWriteState>();
+    state->mappings = parseDigitalWriteMappings(arguments);
+    const size_t count = state->mappings.size();
+    state->sources.reserve(count);
+    state->readbacks.reserve(count);
+    for (const auto& mapping : state->mappings) {
+        state->sources.push_back(module_->dartwic->createFixedChannel(mapping.source.channel));
+        state->readbacks.push_back(module_->dartwic->createFixedChannel(mapping.state.channel));
+    }
+    state->desired_values.resize(count);
+    state->readback_values.resize(count);
+    state->changed_names.reserve(count);
+    state->changed_values.reserve(count);
+    return state;
+}
+
+void LabJackT7Controller::applyDigitalWrite(DigitalWriteState& state) {
     if (!ljm_library_ready_) {
         return;
     }
@@ -633,23 +645,20 @@ void LabJackT7Controller::applyDigitalWrite(
         return;
     }
 
-    const auto mappings = parseDigitalWriteMappings(arguments);
+    const auto& mappings = state.mappings;
     if (mappings.empty()) {
         return;
     }
     if (demo_mode_) {
-        for (const auto& mapping : mappings) {
-            const double desired = query(mapping.source, 0.0) != 0.0 ? 1.0 : 0.0;
-            upsert(mapping.state, desired);
+        for (size_t index = 0; index < mappings.size(); ++index) {
+            const double desired = module_->dartwic->queryChannel(state.sources[index], 0.0) != 0.0 ? 1.0 : 0.0;
+            (void)module_->dartwic->upsertChannel(state.readbacks[index], desired);
         }
         return;
     }
 
-    std::vector<double> desired_values;
-    std::vector<double> readback_values(mappings.size(), 0.0);
-    desired_values.reserve(mappings.size());
-    for (const auto& mapping : mappings) {
-        desired_values.push_back(query(mapping.source, 0.0) != 0.0 ? 1.0 : 0.0);
+    for (size_t index = 0; index < mappings.size(); ++index) {
+        state.desired_values[index] = module_->dartwic->queryChannel(state.sources[index], 0.0) != 0.0 ? 1.0 : 0.0;
     }
 
     {
@@ -673,29 +682,23 @@ void LabJackT7Controller::applyDigitalWrite(
 
         auto state_mask = static_cast<std::uint32_t>(std::llround(bank_values[0]));
         const auto direction_mask = static_cast<std::uint32_t>(std::llround(bank_values[1]));
-        std::vector<std::string> changed_names;
-        std::vector<double> changed_values;
-        changed_names.reserve(mappings.size());
-        changed_values.reserve(mappings.size());
+        state.changed_names.clear();
+        state.changed_values.clear();
         for (size_t index = 0; index < mappings.size(); ++index) {
             const auto bit = std::uint32_t{1} << mappings[index].register_number;
             const bool is_output = (direction_mask & bit) != 0;
             const double current_value = (state_mask & bit) != 0 ? 1.0 : 0.0;
-            if (!is_output || current_value != desired_values[index]) {
-                changed_names.push_back(mappings[index].labjack_name);
-                changed_values.push_back(desired_values[index]);
+            if (!is_output || current_value != state.desired_values[index]) {
+                state.changed_names.push_back(mappings[index].labjack_name.c_str());
+                state.changed_values.push_back(state.desired_values[index]);
             }
         }
 
-        if (!changed_names.empty()) {
-            std::vector<const char*> changed_name_pointers;
-            changed_name_pointers.reserve(changed_names.size());
-            for (const auto& name : changed_names) changed_name_pointers.push_back(name.c_str());
-
+        if (!state.changed_names.empty()) {
             error_address = -1;
             error = LJM_eWriteNames(
-                handle_, static_cast<int>(changed_names.size()), changed_name_pointers.data(),
-                changed_values.data(), &error_address);
+                handle_, static_cast<int>(state.changed_names.size()), state.changed_names.data(),
+                state.changed_values.data(), &error_address);
             if (error != LJME_NOERROR) {
                 handleError(error, "digital_write_changed:address=" + std::to_string(error_address));
                 return;
@@ -712,16 +715,16 @@ void LabJackT7Controller::applyDigitalWrite(
 
         for (size_t index = 0; index < mappings.size(); ++index) {
             const auto bit = std::uint32_t{1} << mappings[index].register_number;
-            readback_values[index] = (state_mask & bit) != 0 ? 1.0 : 0.0;
+            state.readback_values[index] = (state_mask & bit) != 0 ? 1.0 : 0.0;
         }
     }
 
     for (size_t index = 0; index < mappings.size(); ++index) {
-        upsert(mappings[index].state, readback_values[index]);
+        (void)module_->dartwic->upsertChannel(state.readbacks[index], state.readback_values[index]);
     }
 }
 
-void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtime) {
+void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtime, StreamState& state) {
     if (!ljm_library_ready_) {
         return;
     }
@@ -778,15 +781,36 @@ void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtim
     }
 
     std::vector<double> data(static_cast<size_t>(scans_per_read * addresses.size()), 0.0);
+    struct StreamSamples {
+        RapidChannel destination;
+        std::vector<std::pair<double, uint64_t>> values;
+        size_t mappings_per_scan = 0;
+    };
+    std::vector<StreamSamples> sample_groups;
+    sample_groups.reserve(mappings.size());
+    std::vector<size_t> sample_group_by_mapping;
+    sample_group_by_mapping.reserve(mappings.size());
+    std::unordered_map<std::string, size_t> group_index_by_channel;
+    group_index_by_channel.reserve(mappings.size());
+    for (const auto& mapping : mappings) {
+        const auto [it, inserted] = group_index_by_channel.emplace(
+            mapping.destination.channel, sample_groups.size());
+        if (inserted) sample_groups.push_back(StreamSamples{mapping.destination, {}, 0});
+        ++sample_groups[it->second].mappings_per_scan;
+        sample_group_by_mapping.push_back(it->second);
+    }
+    for (auto& group : sample_groups) {
+        group.values.reserve(static_cast<size_t>(scans_per_read) * group.mappings_per_scan);
+    }
     int device_backlog = 0;
     int ljm_backlog = 0;
     int read_number = 0;
 
-    publishTaskDiagnostic(task_runtime, "_stream_target_scan_rate", scan_rate);
-    publishTaskDiagnostic(task_runtime, "_stream_scans_per_read", static_cast<double>(scans_per_read));
-    publishTaskDiagnostic(task_runtime, "_stream_last_read_ms", 0.0);
-    publishTaskDiagnostic(task_runtime, "_stream_device_scan_backlog", 0.0);
-    publishTaskDiagnostic(task_runtime, "_stream_ljm_scan_backlog", 0.0);
+    publishTaskDiagnostic(state, 0, scan_rate);
+    publishTaskDiagnostic(state, 1, static_cast<double>(scans_per_read));
+    publishTaskDiagnostic(state, 4, 0.0);
+    publishTaskDiagnostic(state, 5, 0.0);
+    publishTaskDiagnostic(state, 6, 0.0);
 
     std::mt19937 rng(std::random_device{}());
     std::uniform_real_distribution<double> demo_distribution(0.0, 10.0);
@@ -797,8 +821,8 @@ void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtim
     while (!task_runtime.isStopRequested()) {
         if (!stream_started) {
             if (demo_mode_) {
-                publishTaskDiagnostic(task_runtime, "_stream_actual_scan_rate", scan_rate);
-                publishTaskDiagnostic(task_runtime, "_stream_expected_read_rate", scan_rate / static_cast<double>(scans_per_read));
+                publishTaskDiagnostic(state, 2, scan_rate);
+                publishTaskDiagnostic(state, 3, scan_rate / static_cast<double>(scans_per_read));
                 read_number = 0;
                 stream_start = unixNanosecondsNow();
                 last_successful_read = std::chrono::steady_clock::now();
@@ -806,7 +830,7 @@ void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtim
             } else if (!isConnected()) {
                 const int error = connect();
                 const auto now = std::chrono::steady_clock::now();
-                publishTaskDiagnostic(task_runtime, "_stream_last_read_ms", std::chrono::duration<double, std::milli>(now - last_successful_read).count());
+                publishTaskDiagnostic(state, 4, std::chrono::duration<double, std::milli>(now - last_successful_read).count());
                 if (error != LJME_NOERROR) {
                     handleError(error, "stream_connect");
                     std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -865,9 +889,9 @@ void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtim
                 }
 
                 const auto now = std::chrono::steady_clock::now();
-                publishTaskDiagnostic(task_runtime, "_stream_last_read_ms", std::chrono::duration<double, std::milli>(now - last_successful_read).count());
+                publishTaskDiagnostic(state, 4, std::chrono::duration<double, std::milli>(now - last_successful_read).count());
                 if (exit_after_config_error) {
-                    publishTaskDiagnostic(task_runtime, "_stream_last_read_ms", 0.0);
+                    publishTaskDiagnostic(state, 4, 0.0);
                     releaseStream(current_task_key);
                     return;
                 }
@@ -879,8 +903,8 @@ void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtim
                 }
 
                 scan_rate = requested_scan_rate;
-                publishTaskDiagnostic(task_runtime, "_stream_actual_scan_rate", scan_rate);
-                publishTaskDiagnostic(task_runtime, "_stream_expected_read_rate", scan_rate / static_cast<double>(scans_per_read));
+                publishTaskDiagnostic(state, 2, scan_rate);
+                publishTaskDiagnostic(state, 3, scan_rate / static_cast<double>(scans_per_read));
                 read_number = 0;
                 stream_start = unixNanosecondsNow();
                 last_successful_read = std::chrono::steady_clock::now();
@@ -912,29 +936,25 @@ void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtim
             continue;
         }
 
-        publishTaskDiagnostic(task_runtime, "_stream_last_read_ms", std::chrono::duration<double, std::milli>(read_end - last_successful_read).count());
+        publishTaskDiagnostic(state, 4, std::chrono::duration<double, std::milli>(read_end - last_successful_read).count());
         last_successful_read = read_end;
         ++read_number;
-        std::unordered_map<std::string, std::vector<std::pair<double, uint64_t>>> grouped;
-        std::unordered_map<std::string, RapidChannel> grouped_channels;
+        for (auto& group : sample_groups) group.values.clear();
         for (int scan_index = 0; scan_index < scans_per_read; ++scan_index) {
             const double scan_number = static_cast<double>((read_number - 1) * scans_per_read + scan_index);
             const auto timestamp = stream_start + static_cast<uint64_t>((scan_number / scan_rate) * 1'000'000'000.0);
             for (size_t mapping_index = 0; mapping_index < mappings.size(); ++mapping_index) {
                 const auto data_index = static_cast<size_t>(scan_index) * mappings.size() + mapping_index;
-                const auto& destination = mappings[mapping_index].destination;
-                const std::string key = destination.channel;
-                grouped[key].push_back({data[data_index], timestamp});
-                grouped_channels[key] = destination;
+                sample_groups[sample_group_by_mapping[mapping_index]].values.emplace_back(data[data_index], timestamp);
             }
         }
 
-        for (const auto& [key, values] : grouped) {
-            upsertBulk(grouped_channels.at(key), values);
+        for (const auto& group : sample_groups) {
+            upsertBulk(group.destination, group.values);
         }
 
-        publishTaskDiagnostic(task_runtime, "_stream_device_scan_backlog", static_cast<double>(device_backlog));
-        publishTaskDiagnostic(task_runtime, "_stream_ljm_scan_backlog", static_cast<double>(ljm_backlog));
+        publishTaskDiagnostic(state, 5, static_cast<double>(device_backlog));
+        publishTaskDiagnostic(state, 6, static_cast<double>(ljm_backlog));
 
         task_runtime.recordWorkerCycle();
     }
@@ -949,7 +969,7 @@ void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtim
         }
     }
 
-    publishTaskDiagnostic(task_runtime, "_stream_last_read_ms", 0.0);
+    publishTaskDiagnostic(state, 4, 0.0);
     releaseStream(current_task_key);
 }
 

@@ -1,0 +1,14 @@
+{
+  "files": {
+    "plugin.json": {
+      "sha256": "c6ea55e7887880306b2c943ffd4ea8de069ece7de879f0481d02520006a2f22d",
+      "bytes": 567
+    },
+    "plugin.zip": {
+      "sha256": "6ae362a83185d10c5b8d97a0dc36ee349845196cea6c972172427c25d26f94eb",
+      "bytes": 3143427
+    }
+  },
+  "platform": "windows-x64",
+  "version": "2.0.0"
+}

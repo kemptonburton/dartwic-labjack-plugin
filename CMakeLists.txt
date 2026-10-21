@@ -49,9 +49,16 @@ target_include_directories(labjack_t7_engine PRIVATE
     ${ENGINE_INCLUDE_DIRS})
 
 find_package(nlohmann_json CONFIG REQUIRED)
-target_link_libraries(labjack_t7_engine PRIVATE
-    nlohmann_json::nlohmann_json
-    "${ENGINE_DIR}/libs/LabJack/Drivers/64bit/LabJackM.lib")
+target_link_libraries(labjack_t7_engine PRIVATE nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_link_libraries(labjack_t7_engine PRIVATE
+        "${ENGINE_DIR}/libs/LabJack/Drivers/64bit/LabJackM.lib")
+elseif(UNIX AND NOT APPLE)
+    find_library(LABJACKM_LIBRARY NAMES LabJackM REQUIRED)
+    target_link_libraries(labjack_t7_engine PRIVATE "${LABJACKM_LIBRARY}")
+else()
+    message(FATAL_ERROR "LabJack T7 plugin supports Windows and Linux builds only.")
+endif()
 
 set_target_properties(labjack_t7_engine PROPERTIES
     OUTPUT_NAME "${ENGINE_PLUGIN_ID}"
