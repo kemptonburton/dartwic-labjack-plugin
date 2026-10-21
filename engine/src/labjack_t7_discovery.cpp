@@ -2,6 +2,7 @@
 
 #include <LabJackM.h>
 #include <modules/BaseModule.h>
+#include <discovery/DiscoveryResources.h>
 
 #include <algorithm>
 #include <array>
@@ -314,15 +315,29 @@ void LabJackT7DeviceFinder::announce(
         });
     }
 
-    const auto analog_group = suggestionGroup(
+    auto analog_group = suggestionGroup(
         "analog_inputs", "Analog inputs", "analog", "ain", analog_input_start_, analog_input_end_,
         nlohmann::json::array({taskOption("stream", "Stream", "ain", "input", suggest_analog_inputs_)}));
-    const auto digital_input_group = suggestionGroup(
+    auto digital_input_group = suggestionGroup(
         "digital_inputs", "Digital inputs", "digital", "dio", digital_io_start_, digital_io_end_,
         nlohmann::json::array({taskOption("stream", "Stream", "dio", "input", false)}));
-    const auto digital_output_group = suggestionGroup(
+    auto digital_output_group = suggestionGroup(
         "digital_outputs", "Digital outputs", "digital", "dio_command", digital_io_start_, digital_io_end_,
         nlohmann::json::array({taskOption("digital_write", "Digital write", "dio_command", "output", false)}));
+
+    analog_group["mapping"] = {{"channel_type", "analog"}, {"negative_channel", LJM_GND}, {"range", 10.0}};
+    digital_input_group["mapping"] = {{"channel_type", "digital"}};
+    digital_output_group["mapping"] = {{"channel_type", "digital"}};
+    // The digital task always creates a state channel beside each command.
+    digital_output_group["task_options"][0]["readback_suffix"] = "_state";
+    const DARTWIC::API::DiscoveryResources module_resources{
+        .channels = {{"{instance}.info.connected", "Connection status", "input"}},
+    };
+    DARTWIC::API::DiscoveryResources stream_resources;
+    for (const auto* suffix : {
+        "target_scan_rate", "scans_per_read", "actual_scan_rate", "expected_read_rate",
+        "last_read_ms", "device_scan_backlog", "ljm_scan_backlog"
+    }) stream_resources.channels.push_back({std::string{"{instance}_stream_stream_"} + suffix, suffix, "input"});
 
     const std::string endpoint_host = ip.empty() ? connection : ip;
     nlohmann::json discovery_request;
@@ -333,11 +348,14 @@ void LabJackT7DeviceFinder::announce(
         {"endpoint", {{"host", endpoint_host}, {"port", ip.empty() ? 1 : LJM_TCP_PORT}, {"unit_id", serial_number}}},
         {"metadata", {
             {"protocol", "LabJack LJM"}, {"serial_number", serial_number},
-            {"connection_type", connection}, {"ip_address", ip}, {"device_type_code", device_type}
+            {"connection_type", connection}, {"ip_address", ip}, {"device_type_code", device_type},
+            {"endpoint_label", connection + " / " + identifier + (ip.empty() ? "" : " / " + ip)},
+            {"module_map_summary", "Analog and digital I/O"}
         }},
         {"channels", channels},
         {"provisioning", {
             {"module_type", "labjack_t7"}, {"suggested_instance_name", instance_name},
+            {"resources", module_resources.toJson()},
             {"parameters", {{"device_type", "T7"}, {"connection_type", connection}, {"identifier", identifier}}},
             {"module_identity", {{"parameter_keys", nlohmann::json::array({"device_type", "identifier"})}}},
             {"channel_suggestion_editor", {
@@ -345,7 +363,9 @@ void LabJackT7DeviceFinder::announce(
                 {"groups", nlohmann::json::array({analog_group, digital_input_group, digital_output_group})},
                 {"tasks", nlohmann::json::array({
                     {{"id", "stream"}, {"label", "Stream"}, {"name_suffix", "_stream"},
-                        {"task_type", "stream"}, {"argument_key", "mappings"}},
+                        {"task_type", "stream"}, {"argument_key", "mappings"},
+                        {"arguments", {{"target_scan_rate", 100.0}, {"scans_per_read", 10}}},
+                        {"resources", stream_resources.toJson()}},
                     {{"id", "digital_write"}, {"label", "Digital write"}, {"name_suffix", "_write"},
                         {"task_type", "digital_write"}, {"argument_key", "mappings"}}
                 })}

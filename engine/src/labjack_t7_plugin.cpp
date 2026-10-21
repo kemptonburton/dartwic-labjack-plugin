@@ -6,6 +6,7 @@
 #include <LabJackM.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <string>
 #include <utility>
@@ -17,6 +18,14 @@
 #endif
 
 namespace {
+struct DigitalWriteRuntime {
+    std::shared_ptr<LabJackT7Module> module;
+    std::shared_ptr<LabJackT7Controller::DigitalWriteState> state;
+};
+struct StreamRuntime {
+    std::shared_ptr<LabJackT7Module> module;
+    LabJackT7Controller::StreamState state;
+};
 constexpr const char* labjack_icon =
     "https://labjack.com/cdn/shop/files/LabJack_Logo_fa79278b-4a0c-4e5e-8ed7-dff9ad5b8dbb.png?v=1656709585&width=180";
 
@@ -213,13 +222,19 @@ void LabJackT7Plugin::onPluginLoaded() {
     };
     digital_write_task.on_configure = [this](const auto&, DARTWIC::API::TaskRuntime& runtime) {
         configureDigitalWrite(dartwic, runtime);
+        auto module = requireModule(dartwic, runtime.getArguments());
+        auto state = module->controller().prepareDigitalWrite(runtime.getArguments());
+        runtime.setTypedRuntimeContext("labjack_t7.digital_write",
+            std::make_shared<DigitalWriteRuntime>(DigitalWriteRuntime{std::move(module), std::move(state)}));
     };
     digital_write_task.on_start = [this](const auto&, DARTWIC::API::TaskRuntime& runtime) {
         configureDigitalWriteAuthority(dartwic, runtime, mappingChannels(runtime.getArguments()));
     };
-    digital_write_task.on_task = [this](const auto&, DARTWIC::API::TaskRuntime& runtime, double) {
-        auto module = requireModule(dartwic, runtime.getArguments());
-        module->controller().applyDigitalWrite(runtime.getArguments(), runtime);
+    digital_write_task.on_task = [](const auto&, DARTWIC::API::TaskRuntime& runtime, double) {
+        const auto context = runtime.getTypedRuntimeContext<DigitalWriteRuntime>("labjack_t7.digital_write");
+        if (context && context->module && context->state) {
+            context->module->controller().applyDigitalWrite(*context->state);
+        }
     };
     digital_write_task.cleanup = [](DARTWIC::API::TaskRuntime&) {};
     dartwic->registerTaskType("digital_write", "LabJack Digital Write", std::move(digital_write_task));
@@ -233,13 +248,29 @@ void LabJackT7Plugin::onPluginLoaded() {
     };
     stream_task.on_configure = [this](const auto&, DARTWIC::API::TaskRuntime& runtime) {
         configureStream(dartwic, runtime);
+        auto context = std::make_shared<StreamRuntime>();
+        context->module = requireModule(dartwic, runtime.getArguments());
+        constexpr std::array<const char*, 7> suffixes = {
+            "_stream_target_scan_rate", "_stream_scans_per_read", "_stream_actual_scan_rate",
+            "_stream_expected_read_rate", "_stream_last_read_ms",
+            "_stream_device_scan_backlog", "_stream_ljm_scan_backlog"};
+        for (size_t index = 0; index < suffixes.size(); ++index) {
+            context->state.diagnostics[index] = context->module->dartwic->createFixedChannel(
+                runtime.getTaskName() + suffixes[index]);
+        }
+        runtime.setTypedRuntimeContext("labjack_t7.stream", context);
     };
-    stream_task.on_start = [](const auto&, DARTWIC::API::TaskRuntime& runtime) {
+    stream_task.on_start = [this](const auto&, DARTWIC::API::TaskRuntime& runtime) {
         mappingChannels(runtime.getArguments());
+        constexpr std::array<const char*, 7> suffixes = {
+            "_stream_target_scan_rate", "_stream_scans_per_read", "_stream_actual_scan_rate",
+            "_stream_expected_read_rate", "_stream_last_read_ms",
+            "_stream_device_scan_backlog", "_stream_ljm_scan_backlog"};
+        for (const auto* suffix : suffixes) dartwic->setChannel(runtime.getTaskName() + suffix);
     };
-    stream_task.on_task = [this](const auto&, DARTWIC::API::TaskRuntime& runtime, double) {
-        auto module = requireModule(dartwic, runtime.getArguments());
-        module->controller().runStreamWorker(runtime);
+    stream_task.on_task = [](const auto&, DARTWIC::API::TaskRuntime& runtime, double) {
+        const auto context = runtime.getTypedRuntimeContext<StreamRuntime>("labjack_t7.stream");
+        if (context && context->module) context->module->controller().runStreamWorker(runtime, context->state);
     };
     stream_task.on_end = [this](const auto&, DARTWIC::API::TaskRuntime& runtime) {
         const std::string instance = runtime.getArguments().value("module_instance_name", std::string{});
@@ -256,6 +287,10 @@ DARTWIC::Modules::BaseModule* LabJackT7Plugin::createModule(
     DARTWIC::API::SDK_API* drtw) {
     if (module_type_id != "labjack_t7.labjack_t7" && module_type_id != "labjack_t7") return nullptr;
     return new LabJackT7Module(std::move(cfg), drtw);
+}
+
+DARTWIC_PLUGIN_EXPORT uint32_t dartwicEngineSdkAbiVersion() noexcept {
+    return DARTWIC::Plugins::ENGINE_PLUGIN_SDK_ABI_VERSION;
 }
 
 DARTWIC_PLUGIN_EXPORT DARTWIC::Plugins::BasePlugin* createPlugin(

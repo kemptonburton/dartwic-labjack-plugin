@@ -2,6 +2,8 @@
 #define LABJACK_T7_CONTROLLER_H
 
 #include <atomic>
+#include <array>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -26,8 +28,13 @@ public:
 
     bool isConnected() const;
     void monitorConnection();
-    void applyDigitalWrite(const nlohmann::json& arguments, DARTWIC::API::TaskRuntime& task_runtime);
-    void runStreamWorker(DARTWIC::API::TaskRuntime& task_runtime);
+    struct DigitalWriteState;
+    struct StreamState {
+        std::array<DARTWIC::API::FixedChannelHandle, 7> diagnostics;
+    };
+    std::shared_ptr<DigitalWriteState> prepareDigitalWrite(const nlohmann::json& arguments);
+    void applyDigitalWrite(DigitalWriteState& state);
+    void runStreamWorker(DARTWIC::API::TaskRuntime& task_runtime, StreamState& state);
     void stopStream();
     void stopStream(DARTWIC::API::TaskRuntime& task_runtime);
 
@@ -52,6 +59,19 @@ private:
         RapidChannel state;
         int register_number = 0;
     };
+
+public:
+    struct DigitalWriteState {
+        std::vector<DigitalWriteMapping> mappings;
+        std::vector<DARTWIC::API::FixedChannelHandle> sources;
+        std::vector<DARTWIC::API::FixedChannelHandle> readbacks;
+        std::vector<double> desired_values;
+        std::vector<double> readback_values;
+        std::vector<const char*> changed_names;
+        std::vector<double> changed_values;
+    };
+
+private:
 
     double query(const std::string& channel, double default_value = 0.0) const;
     double query(const RapidChannel& channel, double default_value = 0.0) const;
@@ -79,7 +99,7 @@ private:
     bool isValidAnalogRange(double range) const;
     void handleStreamConfigError(const std::vector<std::string>& errors, DARTWIC::API::TaskRuntime& task_runtime) const;
     int applyAnalogStreamConfigLocked(const std::vector<StreamMapping>& mappings, std::string& operation);
-    void publishTaskDiagnostic(DARTWIC::API::TaskRuntime& task_runtime, const std::string& suffix, DARTWIC::API::ChannelValue value) const;
+    void publishTaskDiagnostic(StreamState& state, size_t index, double value) const;
     void configureObserveOnlyChannel(const std::string& channel, const std::string& controller) const;
     void configureStreamChannelFields(const std::vector<StreamMapping>& mappings, double stale_timeout_seconds, const std::string& controller) const;
     void markDisconnectedFromStreamError();

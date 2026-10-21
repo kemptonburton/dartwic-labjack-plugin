@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
+    "ci:setup:linux": "bash scripts/ci-setup-linux.sh",
     "dev": "vite build --watch",
     "typecheck": "tsc --noEmit",
     "preversion": "node ./scripts/plugin-version.mjs --validate",

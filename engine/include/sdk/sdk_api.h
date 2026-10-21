@@ -68,7 +68,6 @@ namespace DARTWIC::API {
         UNITS,
         STALE_TIMEOUT,
         RECORD_MODE,
-        DATA_FRAME,
         CONTROL_POLICY,
         CONTROL_OWNER,
         ACTIVE_CONTROLLER,
