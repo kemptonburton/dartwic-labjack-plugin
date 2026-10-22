@@ -6,3 +6,6 @@ plugin.zip
 node_modules
 
 build-configuration.json
+
+/plugin-*.zip
+/release-manifest.json
