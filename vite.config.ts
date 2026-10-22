@@ -25,7 +25,9 @@ function createDartwicPluginCopyPlugin() {
     async writeBundle() {
       await ensureDir(releaseUiDir);
       await cp(sourceManifestPath, releaseManifestPath, { force: true });
-      // Installed interface plugins contain only their manifest and compiled
+      await rm(path.join(releasePluginDir, "assets"), {recursive: true, force: true});
+      await cp(path.join(__dirname, "assets"), path.join(releasePluginDir, "assets"), {recursive: true});
+      // Installed interface plugins contain their assets, manifest and compiled
       // runtime. Source remains exclusively in this plugin repository.
       await rm(path.resolve(releasePluginDir, "src"), { recursive: true, force: true });
     }
