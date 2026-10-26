@@ -1,8 +1,7 @@
 import {definePlugin} from "@dartwic/interface-sdk";
-import {moduleConfigs} from "./moduleConfigs";
+import {moduleMap, streamMap, digitalWriteMap} from './configMaps';
 import {LabJackPluginSettings} from "./pluginSettings";
 import {taskCards} from "./taskCards";
-import {taskConfigs} from "./taskConfigs";
 
 export default definePlugin({
   id: "labjack_t7",
@@ -10,14 +9,14 @@ export default definePlugin({
   register(registry) {
     registry.addTaskUi({
       id: "digital_write", name: "LabJack Digital Write",
-      card: taskCards[0].component, editor: taskConfigs[0].component,
+      card: taskCards[0].component, configMap: digitalWriteMap,
     });
     registry.addTaskUi({
       id: "stream", name: "LabJack Stream",
-      card: taskCards[1].component, editor: taskConfigs[1].component,
+      card: taskCards[1].component, configMap: streamMap,
     });
     registry.addModuleUi({
-      id: "labjack_t7", name: "LabJack T7", panel: moduleConfigs[0].component,
+      id: "labjack_t7", name: "LabJack T7", configMap: moduleMap,
       connection: ({instanceConfig}) => ({
         channel: `${instanceConfig.name}.info.connected`, label: "LabJack LJM",
         endpoint: `${instanceConfig.parameters?.connection_type || "ANY"} · ${instanceConfig.parameters?.identifier || "ANY"}`,

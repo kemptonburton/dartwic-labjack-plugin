@@ -16,7 +16,6 @@
 
 using DARTWIC::API::ChannelField;
 using DARTWIC::API::ChannelValue;
-using DARTWIC::API::ControlPolicy;
 using DARTWIC::API::RecordMode;
 
 namespace {
@@ -25,10 +24,6 @@ namespace {
 
     std::string taskKey(DARTWIC::API::TaskRuntime& task_runtime) {
         return task_runtime.getTaskName();
-    }
-
-    std::string taskController(DARTWIC::API::TaskRuntime& task_runtime) {
-        return "task:" + taskKey(task_runtime);
     }
 
     std::string stateChannelName(const std::string& channel) {
@@ -549,29 +544,15 @@ void LabJackT7Controller::publishTaskDiagnostic(
     (void)module_->dartwic->upsertChannel(state.diagnostics[index], value);
 }
 
-void LabJackT7Controller::configureObserveOnlyChannel(
-    const std::string& channel,
-    const std::string& controller
-) const {
-    module_->dartwic->upsertChannelField(channel, ChannelField::CONTROL_OWNER, controller,
-        DARTWIC::API::ChannelStorage::Fixed);
-    module_->dartwic->upsertChannelField(channel, ChannelField::ACTIVE_CONTROLLER, controller,
-        DARTWIC::API::ChannelStorage::Fixed);
-    module_->dartwic->upsertChannelField(channel, ChannelField::CONTROL_POLICY, ControlPolicy::ObserveOnly,
-        DARTWIC::API::ChannelStorage::Fixed);
-}
-
 void LabJackT7Controller::configureStreamChannelFields(
     const std::vector<StreamMapping>& mappings,
-    double stale_timeout_seconds,
-    const std::string& controller
+    double stale_timeout_seconds
 ) const {
     for (const auto& mapping : mappings) {
         module_->dartwic->upsertChannelField(mapping.destination.channel, ChannelField::STALE_TIMEOUT, stale_timeout_seconds,
             DARTWIC::API::ChannelStorage::Fixed);
         module_->dartwic->upsertChannelField(mapping.destination.channel, ChannelField::RECORD_MODE, RecordMode::EveryValue,
             DARTWIC::API::ChannelStorage::Fixed);
-        configureObserveOnlyChannel(mapping.destination.channel, controller);
     }
 }
 
@@ -762,10 +743,9 @@ void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtim
         scan_rate = 100.0;
     }
 
-    const std::string controller = taskController(task_runtime);
     const double reads_per_second = scan_rate / static_cast<double>(scans_per_read);
     const double stale_timeout_seconds = std::max(1.0, 2.0 / reads_per_second);
-    configureStreamChannelFields(mappings, stale_timeout_seconds, controller);
+    configureStreamChannelFields(mappings, stale_timeout_seconds);
 
     std::vector<int> addresses;
     addresses.reserve(mappings.size());

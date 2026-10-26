@@ -100,8 +100,7 @@ private:
     void handleStreamConfigError(const std::vector<std::string>& errors, DARTWIC::API::TaskRuntime& task_runtime) const;
     int applyAnalogStreamConfigLocked(const std::vector<StreamMapping>& mappings, std::string& operation);
     void publishTaskDiagnostic(StreamState& state, size_t index, double value) const;
-    void configureObserveOnlyChannel(const std::string& channel, const std::string& controller) const;
-    void configureStreamChannelFields(const std::vector<StreamMapping>& mappings, double stale_timeout_seconds, const std::string& controller) const;
+    void configureStreamChannelFields(const std::vector<StreamMapping>& mappings, double stale_timeout_seconds) const;
     void markDisconnectedFromStreamError();
     bool tryAcquireStream(const std::string& task_key);
     void releaseStream(const std::string& task_key);

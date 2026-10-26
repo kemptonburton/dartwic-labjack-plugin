@@ -70,20 +70,11 @@ std::vector<std::string> mappingChannels(const nlohmann::json& arguments, bool a
 
 void configureDigitalWriteAuthority(
     DARTWIC::API::SDK_API* api,
-    DARTWIC::API::TaskRuntime& runtime,
     const std::vector<std::string>& channels
 ) {
-    const std::string controller = "task:" + runtime.getTaskName();
     for (const auto& channel : channels) {
         const auto state_channel = stateChannel(channel);
-        api->upsertChannelField(state_channel, DARTWIC::API::ChannelField::CONTROL_OWNER,
-            controller, DARTWIC::API::ChannelStorage::Fixed);
-        api->upsertChannelField(state_channel, DARTWIC::API::ChannelField::ACTIVE_CONTROLLER,
-            controller, DARTWIC::API::ChannelStorage::Fixed);
-        api->upsertChannelField(state_channel, DARTWIC::API::ChannelField::CONTROL_POLICY,
-            DARTWIC::API::ControlPolicy::ObserveOnly, DARTWIC::API::ChannelStorage::Fixed);
-        api->upsertChannelField(state_channel, DARTWIC::API::ChannelField::STALE_TIMEOUT,
-            1.0, DARTWIC::API::ChannelStorage::Fixed);
+        api->setChannel(state_channel);
     }
 }
 
@@ -94,8 +85,9 @@ void configureDigitalWrite(DARTWIC::API::SDK_API* api, DARTWIC::API::TaskRuntime
     for (const auto& channel : channels) {
         api->createFixedChannel(channel);
         api->createFixedChannel(stateChannel(channel));
+        api->upsertChannelField(stateChannel(channel), DARTWIC::API::ChannelField::STALE_TIMEOUT,
+            1.0, DARTWIC::API::ChannelStorage::Fixed);
     }
-    configureDigitalWriteAuthority(api, runtime, channels);
     runtime.setFixedInputChannels(std::move(channels));
 }
 
@@ -103,15 +95,8 @@ void configureStream(DARTWIC::API::SDK_API* api, DARTWIC::API::TaskRuntime& runt
     const auto& arguments = runtime.getArguments();
     requireModule(api, arguments);
     api->removeChannel(runtime.getTaskName() + "_stream_worker_read_rate");
-    const std::string controller = "task:" + runtime.getTaskName();
     for (const auto& channel : mappingChannels(arguments, true)) {
         api->createFixedChannel(channel);
-        api->upsertChannelField(channel, DARTWIC::API::ChannelField::CONTROL_OWNER,
-            controller, DARTWIC::API::ChannelStorage::Fixed);
-        api->upsertChannelField(channel, DARTWIC::API::ChannelField::ACTIVE_CONTROLLER,
-            controller, DARTWIC::API::ChannelStorage::Fixed);
-        api->upsertChannelField(channel, DARTWIC::API::ChannelField::CONTROL_POLICY,
-            DARTWIC::API::ControlPolicy::ObserveOnly, DARTWIC::API::ChannelStorage::Fixed);
         api->upsertChannelField(channel, DARTWIC::API::ChannelField::RECORD_MODE,
             DARTWIC::API::RecordMode::EveryValue, DARTWIC::API::ChannelStorage::Fixed);
     }
@@ -228,7 +213,7 @@ void LabJackT7Plugin::onPluginLoaded() {
             std::make_shared<DigitalWriteRuntime>(DigitalWriteRuntime{std::move(module), std::move(state)}));
     };
     digital_write_task.on_start = [this](const auto&, DARTWIC::API::TaskRuntime& runtime) {
-        configureDigitalWriteAuthority(dartwic, runtime, mappingChannels(runtime.getArguments()));
+        configureDigitalWriteAuthority(dartwic, mappingChannels(runtime.getArguments()));
     };
     digital_write_task.on_task = [](const auto&, DARTWIC::API::TaskRuntime& runtime, double) {
         const auto context = runtime.getTypedRuntimeContext<DigitalWriteRuntime>("labjack_t7.digital_write");
@@ -261,7 +246,7 @@ void LabJackT7Plugin::onPluginLoaded() {
         runtime.setTypedRuntimeContext("labjack_t7.stream", context);
     };
     stream_task.on_start = [this](const auto&, DARTWIC::API::TaskRuntime& runtime) {
-        mappingChannels(runtime.getArguments());
+        for (const auto& channel : mappingChannels(runtime.getArguments())) dartwic->setChannel(channel);
         constexpr std::array<const char*, 7> suffixes = {
             "_stream_target_scan_rate", "_stream_scans_per_read", "_stream_actual_scan_rate",
             "_stream_expected_read_rate", "_stream_last_read_ms",

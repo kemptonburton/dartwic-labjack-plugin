@@ -16,6 +16,14 @@ checks their hashes against `sdk-lock.json`. Use `npm ci` for reproducible insta
 - Exposes live connection state and linked tasks/channels on module pages, with LJM compatibility on the plugin page.
 - Uses the current engine and interface plugin SDK registration model.
 
+## Feedback and authority
+
+Stream measurements, digital readbacks, and task diagnostics become observe-only
+through `setChannel` on each task start. Publication uses ordinary upserts under
+that ownership. Command channels remain writable; completed stop releases the
+task's observed channels. Digital writes read `DIO_STATE` back in the same cycle
+after any changed outputs are written. Demo mode simulates this feedback.
+
 ## Runtime prerequisite
 
 Install the LabJack LJM Basic driver package on the engine host. Windows uses `LabJackM.dll`; Linux uses the system `libLabJackM.so`. The Linux native build links against LJM, so the library and its headers must also be installed on the build host. The package does not bundle or install the vendor driver. The module page reports the loaded library and verifies that its runtime version matches the headers used to build the plugin.
