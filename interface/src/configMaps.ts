@@ -1,6 +1,25 @@
 import {defineConfigMap, createModuleConfigAdapter, createTaskConfigAdapter, type ConfigMapField} from '@dartwic/interface-sdk/config-maps';
 import React from '@dartwic/interface-sdk/react';
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@dartwic/interface-sdk/ui/general';
+import {createDiscoverySettingsAdapter} from './discoverySettings.js';
+
+export const pluginMap = defineConfigMap({
+  ...createDiscoverySettingsAdapter('labjack_t7'), title: 'LabJack discovery settings',
+  groups: [{id: 'discovery', label: 'Device discovery · Engine restart required', fields: [
+    {path: 'device_discovery.enabled', label: 'Device discovery', type: 'toggle', defaultValue: true},
+    {path: 'device_discovery.scan_interval_seconds', label: 'Scan interval (seconds)', type: 'number', required: true, integer: true, min: 1, max: 300, defaultValue: 3},
+    {path: 'device_discovery.suggest_analog_inputs', label: 'Suggest analog inputs', type: 'toggle', defaultValue: true},
+    ...(['analog_input', 'digital_io'] as const).flatMap(kind => (['start', 'end'] as const).map(edge => ({
+      path: `device_discovery.${kind}_${edge}`, label: `${kind === 'analog_input' ? 'Analog input' : 'Digital I/O'} ${edge}`,
+      type: 'number' as const, required: true, integer: true, min: 0, max: kind === 'analog_input' ? 13 : 22,
+      defaultValue: edge === 'start' ? 0 : kind === 'analog_input' ? 13 : 22,
+    }))),
+  ]}],
+  validate({device_discovery: value}) {
+    return value.analog_input_start > value.analog_input_end || value.digital_io_start > value.digital_io_end
+      ? 'Range starts must not exceed their ends.' : '';
+  },
+});
 
 export const moduleMap = defineConfigMap({
   ...createModuleConfigAdapter(), title: 'LabJack connection',

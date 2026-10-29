@@ -16,6 +16,10 @@ checks their hashes against `sdk-lock.json`. Use `npm ci` for reproducible insta
 - Exposes live connection state and linked tasks/channels on module pages, with LJM compatibility on the plugin page.
 - Uses the current engine and interface plugin SDK registration model.
 
+## Discovery settings
+
+Open the plugin's **Discovery & LJM** settings or its **Config Map** sheet in Channel Search to set discovery enablement, scan interval, analog-input suggestions, and AIN/DIO ranges. Both views edit the same workspace settings. Saved discovery changes require an Engine restart; the LJM compatibility status remains alongside the settings map. Existing project overrides must be removed before editing the corresponding workspace setting here.
+
 ## Feedback and authority
 
 Stream measurements, digital readbacks, and task diagnostics become observe-only

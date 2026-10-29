@@ -133,14 +133,14 @@ void LabJackT7Controller::upsertBulk(const RapidChannel& channel, const std::vec
     module_->dartwic->upsertChannelValueBulk(channel.channel, data);
 }
 
-void LabJackT7Controller::consoleError(
+void LabJackT7Controller::reportError(
     const std::string& title,
     const std::string& description,
     std::vector<std::string> channels,
     const std::string& resolution,
     int auto_ack
 ) const {
-    module_->dartwic->consoleError(title, description, std::move(channels), resolution, auto_ack, 10.0);
+    module_->dartwic->error(title, description, std::move(channels), resolution, auto_ack, 10.0);
 }
 
 void LabJackT7Controller::connectionLoopStart() {
@@ -174,7 +174,7 @@ bool LabJackT7Controller::validateLjmLibrary() const {
     int error = LJM_ReadLibraryConfigS(LJM_LIBRARY_VERSION, &runtime_version);
     if (error != LJME_NOERROR) {
         handleError(error, "ljm_library_version");
-        consoleError(
+        reportError(
             "LabJack T7 LJM Install Required [" + instance_name_ + "]",
             "The LabJack LJM system install could not be read. Install the LabJack LJM Basic driver package.",
             {instance_name_ + ".info.connected"},
@@ -189,7 +189,7 @@ bool LabJackT7Controller::validateLjmLibrary() const {
         description << "The installed LabJack LJM runtime version does not match the SDK used to build this plugin."
             << "\n[Installed LJM runtime: " << runtime_version << "]"
             << "\n[Plugin SDK version: " << LJM_VERSION << "]";
-        consoleError(
+        reportError(
             "LabJack T7 LJM Version Mismatch [" + instance_name_ + "]",
             description.str(),
             {instance_name_ + ".info.connected"},
@@ -204,7 +204,7 @@ bool LabJackT7Controller::validateLjmLibrary() const {
     error = LJM_NameToAddress("AIN0", &address, &type);
     if (error != LJME_NOERROR) {
         handleError(error, "ljm_constants_check");
-        consoleError(
+        reportError(
             "LabJack T7 LJM Constants Error [" + instance_name_ + "]",
             "The installed LabJack LJM runtime could not resolve AIN0. The system LJM constants/configuration files may be missing or corrupt.",
             {instance_name_ + ".info.connected"},
@@ -288,7 +288,7 @@ void LabJackT7Controller::verifyConnection() {
 void LabJackT7Controller::handleError(int error_number, const std::string& operation) const {
     char error_string[LJM_MAX_NAME_SIZE] = "LJM error not found.";
     LJM_ErrorToString(error_number, error_string);
-    consoleError(
+    reportError(
         "LabJack T7 Error [" + instance_name_ + "]",
         "LabJack operation failed.\n[Operation: " + operation + "]\n[LJM Error: " + std::string(error_string) + "]",
         {instance_name_ + ".info.connected"},
@@ -465,7 +465,7 @@ void LabJackT7Controller::handleStreamConfigError(
         description << "\n- " << error;
     }
 
-    consoleError(
+    reportError(
         "LabJack T7 Stream Config Error [" + instance_name_ + "]",
         description.str(),
         {task_runtime.getTaskName()},
@@ -710,7 +710,7 @@ void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtim
             std::lock_guard<std::mutex> stream_lock(stream_mutex_);
             active_task = active_stream_task_key_;
         }
-        consoleError(
+        reportError(
             "LabJack T7 Stream Already Running [" + instance_name_ + "]",
             "Only one LabJack stream task can own the hardware stream at a time.\n[Active task: " + active_task + "]",
             {},

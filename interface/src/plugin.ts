@@ -1,5 +1,5 @@
 import {definePlugin} from "@dartwic/interface-sdk";
-import {moduleMap, streamMap, digitalWriteMap} from './configMaps';
+import {moduleMap, streamMap, digitalWriteMap, pluginMap} from './configMaps';
 import {LabJackPluginSettings} from "./pluginSettings";
 import {taskCards} from "./taskCards";
 
@@ -23,6 +23,6 @@ export default definePlugin({
         connectedValue: 1,
       }),
     });
-    registry.addSettingsPanel({id: "discovery", name: "Discovery & LJM", component: LabJackPluginSettings});
+    registry.addSettingsPanel({id: "discovery", name: "Discovery & LJM", component: LabJackPluginSettings, configMap: pluginMap});
   },
 });

@@ -78,7 +78,7 @@ private:
     void upsert(const std::string& channel, DARTWIC::API::ChannelValue value) const;
     void upsert(const RapidChannel& channel, DARTWIC::API::ChannelValue value) const;
     void upsertBulk(const RapidChannel& channel, const std::vector<std::pair<double, uint64_t>>& data) const;
-    void consoleError(const std::string& title, const std::string& description, std::vector<std::string> channels, const std::string& resolution, int auto_ack = 0) const;
+    void reportError(const std::string& title, const std::string& description, std::vector<std::string> channels, const std::string& resolution, int auto_ack = 0) const;
 
     void connectionLoopStart();
     void connectionLoop();
