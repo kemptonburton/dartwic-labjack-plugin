@@ -544,6 +544,15 @@ void LabJackT7Controller::publishTaskDiagnostic(
     (void)module_->dartwic->upsertChannel(state.diagnostics[index], value);
 }
 
+void LabJackT7Controller::configureIdleRecording(const std::vector<std::string>& channels) {
+    std::lock_guard<std::mutex> lock(stream_mutex_);
+    if (!active_stream_task_key_.empty()) return;
+    for (const auto& channel : channels) {
+        module_->dartwic->upsertChannelField(channel, ChannelField::RECORD_MODE,
+            RecordMode::OnValueChange, DARTWIC::API::ChannelStorage::Fixed);
+    }
+}
+
 void LabJackT7Controller::configureStreamChannelFields(
     const std::vector<StreamMapping>& mappings,
     double stale_timeout_seconds
@@ -551,7 +560,7 @@ void LabJackT7Controller::configureStreamChannelFields(
     for (const auto& mapping : mappings) {
         module_->dartwic->upsertChannelField(mapping.destination.channel, ChannelField::STALE_TIMEOUT, stale_timeout_seconds,
             DARTWIC::API::ChannelStorage::Fixed);
-        module_->dartwic->upsertChannelField(mapping.destination.channel, ChannelField::RECORD_MODE, RecordMode::EveryValue,
+        module_->dartwic->upsertChannelField(mapping.destination.channel, ChannelField::RECORD_MODE, RecordMode::EveryValueExcludeAutorecord,
             DARTWIC::API::ChannelStorage::Fixed);
     }
 }
@@ -572,6 +581,7 @@ bool LabJackT7Controller::tryAcquireStream(const std::string& task_key) {
     }
 
     active_stream_task_key_ = task_key;
+    stream_stop_requested_.store(false);
     return true;
 }
 
@@ -720,6 +730,26 @@ void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtim
         return;
     }
 
+    // Retain ownership until the worker has stopped submitting samples and
+    // restored recording. A stop request must not admit a replacement early.
+    std::vector<StreamMapping> recording_mappings;
+    const auto finish = [this, &current_task_key, &recording_mappings](void*) noexcept {
+        try { stopStreamTaskKey(current_task_key); }
+        catch (const std::exception& error) {
+            std::cerr << "LabJack stream cleanup failed: " << error.what() << '\n';
+        }
+        for (const auto& mapping : recording_mappings) {
+            try {
+                module_->dartwic->upsertChannelField(mapping.destination.channel,
+                    ChannelField::RECORD_MODE, RecordMode::OnValueChange,
+                    DARTWIC::API::ChannelStorage::Fixed);
+            } catch (const std::exception& error) {
+                std::cerr << "LabJack recording mode restore failed: " << error.what() << '\n';
+            }
+        }
+        releaseStream(current_task_key);
+    };
+    const std::unique_ptr<void, decltype(finish)> cleanup(this, finish);
     const auto& arguments = task_runtime.getArguments();
     std::vector<std::string> stream_config_errors;
     const auto mappings = parseStreamMappings(arguments, stream_config_errors);
@@ -745,6 +775,7 @@ void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtim
 
     const double reads_per_second = scan_rate / static_cast<double>(scans_per_read);
     const double stale_timeout_seconds = std::max(1.0, 2.0 / reads_per_second);
+    recording_mappings = mappings;
     configureStreamChannelFields(mappings, stale_timeout_seconds);
 
     std::vector<int> addresses;
@@ -791,7 +822,7 @@ void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtim
     auto last_successful_read = std::chrono::steady_clock::now();
     bool stream_started = false;
 
-    while (!task_runtime.isStopRequested()) {
+    while (!task_runtime.isStopRequested() && !stream_stop_requested_.load()) {
         if (!stream_started) {
             if (demo_mode_) {
                 publishTaskDiagnostic(state, 2, scan_rate);
@@ -865,7 +896,6 @@ void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtim
                 publishTaskDiagnostic(state, 4, std::chrono::duration<double, std::milli>(now - last_successful_read).count());
                 if (exit_after_config_error) {
                     publishTaskDiagnostic(state, 4, 0.0);
-                    releaseStream(current_task_key);
                     return;
                 }
                 if (error != LJME_NOERROR) {
@@ -943,7 +973,6 @@ void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtim
     }
 
     publishTaskDiagnostic(state, 4, 0.0);
-    releaseStream(current_task_key);
 }
 
 void LabJackT7Controller::stopStream() {
@@ -976,6 +1005,11 @@ void LabJackT7Controller::stopStreamTaskKey(const std::string& task_key) {
     if (task_key.empty()) {
         return;
     }
+    {
+        std::lock_guard<std::mutex> lock(stream_mutex_);
+        if (active_stream_task_key_ != task_key) return;
+        stream_stop_requested_.store(true);
+    }
 
     if (!demo_mode_) {
         std::lock_guard<std::mutex> handle_lock(handle_mutex_);
@@ -987,5 +1021,5 @@ void LabJackT7Controller::stopStreamTaskKey(const std::string& task_key) {
         }
     }
 
-    releaseStream(task_key);
+    // The worker restores recording and releases ownership on exit.
 }

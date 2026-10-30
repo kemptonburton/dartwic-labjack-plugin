@@ -35,6 +35,7 @@ public:
     std::shared_ptr<DigitalWriteState> prepareDigitalWrite(const nlohmann::json& arguments);
     void applyDigitalWrite(DigitalWriteState& state);
     void runStreamWorker(DARTWIC::API::TaskRuntime& task_runtime, StreamState& state);
+    void configureIdleRecording(const std::vector<std::string>& channels);
     void stopStream();
     void stopStream(DARTWIC::API::TaskRuntime& task_runtime);
 
@@ -118,6 +119,7 @@ private:
     std::mutex handle_mutex_;
     std::mutex stream_mutex_;
     std::string active_stream_task_key_;
+    std::atomic<bool> stream_stop_requested_{false};
     int handle_ = -1;
 };
 

@@ -93,13 +93,13 @@ void configureDigitalWrite(DARTWIC::API::SDK_API* api, DARTWIC::API::TaskRuntime
 
 void configureStream(DARTWIC::API::SDK_API* api, DARTWIC::API::TaskRuntime& runtime) {
     const auto& arguments = runtime.getArguments();
-    requireModule(api, arguments);
+    const auto module = requireModule(api, arguments);
     api->removeChannel(runtime.getTaskName() + "_stream_worker_read_rate");
-    for (const auto& channel : mappingChannels(arguments, true)) {
+    const auto channels = mappingChannels(arguments, true);
+    for (const auto& channel : channels) {
         api->createFixedChannel(channel);
-        api->upsertChannelField(channel, DARTWIC::API::ChannelField::RECORD_MODE,
-            DARTWIC::API::RecordMode::EveryValue, DARTWIC::API::ChannelStorage::Fixed);
     }
+    module->controller().configureIdleRecording(channels);
     for (const char* suffix : {
         "_stream_target_scan_rate", "_stream_scans_per_read", "_stream_actual_scan_rate",
         "_stream_expected_read_rate", "_stream_last_read_ms",

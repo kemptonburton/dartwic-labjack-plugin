@@ -107,3 +107,9 @@ remain project-scoped; local secrets and runtime data belong to Engine instances
 Workspaces contain authored Git-trackable content; installed Engine and Interface
 directories contain replaceable software and local state. Plugin installation
 does not copy files into workspaces. See `assets/README.md` for the storage rules.
+
+## Stream recording
+
+Stream destinations use `on_value_change` while idle. The worker switches them to `every_value_exclude_autorecord` before submitting its first batch and keeps this mode throughout reconnect attempts. Every accepted sample, including equal values, is selected for recording without periodic cached-value snapshots. After the worker finishes submitting samples, it restores `on_value_change`, allowing ordinary snapshots again.
+
+The worker submits timestamped batches through `upsertChannelValueBulk`. RAPID updates the live channel once with the final sample and records the selected batch samples independently. Sample timestamps are calculated from stream start and scan rate. Use the worker run interval for an exact-stream export; the idle periods can contain baseline snapshots. Device errors and recording queue pressure can still cause missing measurements.
