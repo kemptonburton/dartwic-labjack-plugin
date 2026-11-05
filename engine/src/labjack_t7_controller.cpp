@@ -87,10 +87,11 @@ LabJackT7Controller::LabJackT7Controller(
     device_type_(std::move(device_type)),
     connection_type_(std::move(connection_type)),
     identifier_(std::move(identifier)) {
-    module_->dartwic->upsertChannelField(instance_name_ + ".info.connected", ChannelField::VALUE, 0.0,
+    // Seed new channels only; module reload must preserve the monitor's sample,
+    // units and authority on an existing connection channel.
+    module_->dartwic->insertChannelField(instance_name_ + ".info.connected", ChannelField::UNITS, std::string{"bool"},
         DARTWIC::API::ChannelStorage::Fixed);
-    module_->dartwic->upsertChannelField(instance_name_ + ".info.connected", ChannelField::UNITS, std::string{"bool"},
-        DARTWIC::API::ChannelStorage::Fixed);
+    (void)module_->dartwic->createFixedChannel(instance_name_ + ".info.connected", 0.0);
     module_->dartwic->upsertChannelField(instance_name_ + ".info.connected", ChannelField::STALE_TIMEOUT, 3.0,
         DARTWIC::API::ChannelStorage::Fixed);
     ljm_library_ready_ = validateLjmLibrary();

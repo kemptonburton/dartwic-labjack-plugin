@@ -22,6 +22,14 @@ Open the plugin's **Discovery & LJM** settings or its **Config Map** sheet in Ch
 
 ## Feedback and authority
 
+Applying module connection settings rebuilds the connection using the same
+module name. Initialization creates Boolean status-channel units only when the
+channel is missing and reuses existing fixed storage without resetting its
+value or taking its monitor's control. The connection loop publishes the new
+connection's health normally. Existing names and task mappings remain intact;
+no Engine permission changes are needed. The three-second stale timeout is
+unchanged. A new module name creates a separate status channel.
+
 Stream measurements, digital readbacks, and task diagnostics become observe-only
 through `setChannel` on each task start. Publication uses ordinary upserts under
 that ownership. Command channels remain writable; completed stop releases the
