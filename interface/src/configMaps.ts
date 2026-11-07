@@ -48,11 +48,14 @@ function taskMap(stream: boolean) {
   return defineConfigMap({...adapter, title: stream ? 'LabJack stream' : 'LabJack digital write',
     groups: [{id: 'configuration', label: 'Task configuration', fields: [
       {path: 'arguments.module_instance_name', label: 'Module connection', type: 'module', pluginId: 'labjack_t7', moduleTypeIds: ['labjack_t7'], required: true},
+      {path: 'arguments.auto_set_stale_timeout', label: 'Auto-set stale timeout', type: 'toggle', defaultValue: true,
+        description: 'Apply to mapped stream channels or digital readbacks. Turn off to edit channel timeouts manually.'},
+      {path: 'arguments.stale_timeout_seconds', label: 'Stale timeout (seconds)', type: 'number', required: true, defaultValue: 2,
+        validate: value => value > 0 ? '' : 'Enter a positive stale timeout in seconds.'},
       ...(stream ? [{path: 'arguments.target_scan_rate', label: 'Target scan rate (Hz)', type: 'number' as const, min: 1, defaultValue: 100},
         {path: 'arguments.scans_per_read', label: 'Scans per read', type: 'number' as const, min: 1, integer: true, defaultValue: 10}] : []),
     ]}, {id: 'bindings', label: 'Channel bindings', tables: [{path: 'arguments.mappings', label: stream ? 'Stream inputs' : 'Digital outputs', columns,
       createRow: () => stream ? {channel_type: 'analog', negative_channel: 199, range: 10} : {}}]}],
-    validate: value => value.arguments?.mappings?.length ? '' : 'Add at least one channel binding.',
   });
 }
 export const streamMap = taskMap(true);

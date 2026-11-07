@@ -26,6 +26,10 @@ struct StreamRuntime {
     std::shared_ptr<LabJackT7Module> module;
     LabJackT7Controller::StreamState state;
 };
+constexpr std::array<const char*, 7> stream_diagnostics = {
+    "_stream_target_scan_rate", "_stream_scans_per_read", "_stream_actual_scan_rate",
+    "_stream_expected_read_rate", "_stream_last_read_ms",
+    "_stream_device_scan_backlog", "_stream_ljm_scan_backlog"};
 constexpr const char* labjack_icon =
     "https://labjack.com/cdn/shop/files/LabJack_Logo_fa79278b-4a0c-4e5e-8ed7-dff9ad5b8dbb.png?v=1656709585&width=180";
 
@@ -39,6 +43,20 @@ std::string normalizeChannel(std::string channel) {
 
 std::string stateChannel(const std::string& channel) {
     return channel + "_state";
+}
+
+double configuredStaleTimeout(const nlohmann::json& arguments) {
+    if (!arguments.value("auto_set_stale_timeout", true)) return 0.0;
+    const double seconds = arguments.value("stale_timeout_seconds", 2.0);
+    if (!std::isfinite(seconds) || seconds <= 0.0) {
+        throw std::runtime_error("Stale timeout must be a positive number of seconds.");
+    }
+    return seconds;
+}
+
+void applyStaleTimeout(DARTWIC::API::SDK_API* api, const std::string& channel, double seconds) {
+    if (seconds > 0.0) api->upsertChannelField(channel, DARTWIC::API::ChannelField::STALE_TIMEOUT,
+        seconds, DARTWIC::API::ChannelStorage::Fixed);
 }
 
 std::shared_ptr<LabJackT7Module> requireModule(
@@ -81,30 +99,33 @@ void configureDigitalWriteAuthority(
 void configureDigitalWrite(DARTWIC::API::SDK_API* api, DARTWIC::API::TaskRuntime& runtime) {
     const auto& arguments = runtime.getArguments();
     requireModule(api, arguments);
+    const double stale_timeout = configuredStaleTimeout(arguments);
     auto channels = mappingChannels(arguments, true);
     for (const auto& channel : channels) {
         api->createFixedChannel(channel);
-        api->createFixedChannel(stateChannel(channel));
-        api->upsertChannelField(stateChannel(channel), DARTWIC::API::ChannelField::STALE_TIMEOUT,
-            1.0, DARTWIC::API::ChannelStorage::Fixed);
+        const auto state_channel = stateChannel(channel);
+        api->createFixedChannel(state_channel);
+        applyStaleTimeout(api, state_channel, stale_timeout);
     }
     runtime.setFixedInputChannels(std::move(channels));
 }
 
-void configureStream(DARTWIC::API::SDK_API* api, DARTWIC::API::TaskRuntime& runtime) {
+std::shared_ptr<StreamRuntime> configureStream(DARTWIC::API::SDK_API* api, DARTWIC::API::TaskRuntime& runtime) {
     const auto& arguments = runtime.getArguments();
-    const auto module = requireModule(api, arguments);
-    api->removeChannel(runtime.getTaskName() + "_stream_worker_read_rate");
+    const double stale_timeout = configuredStaleTimeout(arguments);
+    auto context = std::make_shared<StreamRuntime>();
+    context->module = requireModule(api, arguments);
     const auto channels = mappingChannels(arguments, true);
+    api->removeChannel(runtime.getTaskName() + "_stream_worker_read_rate");
     for (const auto& channel : channels) {
         api->createFixedChannel(channel);
+        applyStaleTimeout(api, channel, stale_timeout);
     }
-    module->controller().configureIdleRecording(channels);
-    for (const char* suffix : {
-        "_stream_target_scan_rate", "_stream_scans_per_read", "_stream_actual_scan_rate",
-        "_stream_expected_read_rate", "_stream_last_read_ms",
-        "_stream_device_scan_backlog", "_stream_ljm_scan_backlog"
-    }) api->createFixedChannel(runtime.getTaskName() + suffix);
+    context->module->controller().configureIdleRecording(channels);
+    for (size_t index = 0; index < stream_diagnostics.size(); ++index) {
+        context->state.diagnostics[index] = api->createFixedChannel(runtime.getTaskName() + stream_diagnostics[index]);
+    }
+    return context;
 }
 
 std::string getLoadedLjmLibraryPath() {
@@ -203,6 +224,7 @@ void LabJackT7Plugin::onPluginLoaded() {
     digital_write_task.metadata.structure = DARTWIC::API::TaskStructure::Periodic;
     digital_write_task.metadata.icon_url = labjack_icon;
     digital_write_task.metadata.default_arguments = {
+        {"auto_set_stale_timeout", true}, {"stale_timeout_seconds", 2.0},
         {"module_instance_name", ""}, {"mappings", nlohmann::json::array()}
     };
     digital_write_task.on_configure = [this](const auto&, DARTWIC::API::TaskRuntime& runtime) {
@@ -228,30 +250,16 @@ void LabJackT7Plugin::onPluginLoaded() {
     stream_task.metadata.structure = DARTWIC::API::TaskStructure::Worker;
     stream_task.metadata.icon_url = labjack_icon;
     stream_task.metadata.default_arguments = {
+        {"auto_set_stale_timeout", true}, {"stale_timeout_seconds", 2.0},
         {"module_instance_name", ""}, {"target_scan_rate", 100.0},
         {"scans_per_read", 10}, {"mappings", nlohmann::json::array()}
     };
     stream_task.on_configure = [this](const auto&, DARTWIC::API::TaskRuntime& runtime) {
-        configureStream(dartwic, runtime);
-        auto context = std::make_shared<StreamRuntime>();
-        context->module = requireModule(dartwic, runtime.getArguments());
-        constexpr std::array<const char*, 7> suffixes = {
-            "_stream_target_scan_rate", "_stream_scans_per_read", "_stream_actual_scan_rate",
-            "_stream_expected_read_rate", "_stream_last_read_ms",
-            "_stream_device_scan_backlog", "_stream_ljm_scan_backlog"};
-        for (size_t index = 0; index < suffixes.size(); ++index) {
-            context->state.diagnostics[index] = context->module->dartwic->createFixedChannel(
-                runtime.getTaskName() + suffixes[index]);
-        }
-        runtime.setTypedRuntimeContext("labjack_t7.stream", context);
+        runtime.setTypedRuntimeContext("labjack_t7.stream", configureStream(dartwic, runtime));
     };
     stream_task.on_start = [this](const auto&, DARTWIC::API::TaskRuntime& runtime) {
         for (const auto& channel : mappingChannels(runtime.getArguments())) dartwic->setChannel(channel);
-        constexpr std::array<const char*, 7> suffixes = {
-            "_stream_target_scan_rate", "_stream_scans_per_read", "_stream_actual_scan_rate",
-            "_stream_expected_read_rate", "_stream_last_read_ms",
-            "_stream_device_scan_backlog", "_stream_ljm_scan_backlog"};
-        for (const auto* suffix : suffixes) dartwic->setChannel(runtime.getTaskName() + suffix);
+        for (const auto* suffix : stream_diagnostics) dartwic->setChannel(runtime.getTaskName() + suffix);
     };
     stream_task.on_task = [](const auto&, DARTWIC::API::TaskRuntime& runtime, double) {
         const auto context = runtime.getTypedRuntimeContext<StreamRuntime>("labjack_t7.stream");

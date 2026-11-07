@@ -554,13 +554,8 @@ void LabJackT7Controller::configureIdleRecording(const std::vector<std::string>&
     }
 }
 
-void LabJackT7Controller::configureStreamChannelFields(
-    const std::vector<StreamMapping>& mappings,
-    double stale_timeout_seconds
-) const {
+void LabJackT7Controller::configureStreamRecording(const std::vector<StreamMapping>& mappings) const {
     for (const auto& mapping : mappings) {
-        module_->dartwic->upsertChannelField(mapping.destination.channel, ChannelField::STALE_TIMEOUT, stale_timeout_seconds,
-            DARTWIC::API::ChannelStorage::Fixed);
         module_->dartwic->upsertChannelField(mapping.destination.channel, ChannelField::RECORD_MODE, RecordMode::EveryValueExcludeAutorecord,
             DARTWIC::API::ChannelStorage::Fixed);
     }
@@ -774,10 +769,8 @@ void LabJackT7Controller::runStreamWorker(DARTWIC::API::TaskRuntime& task_runtim
         scan_rate = 100.0;
     }
 
-    const double reads_per_second = scan_rate / static_cast<double>(scans_per_read);
-    const double stale_timeout_seconds = std::max(1.0, 2.0 / reads_per_second);
     recording_mappings = mappings;
-    configureStreamChannelFields(mappings, stale_timeout_seconds);
+    configureStreamRecording(mappings);
 
     std::vector<int> addresses;
     addresses.reserve(mappings.size());
